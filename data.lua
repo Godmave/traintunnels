@@ -107,10 +107,15 @@ traintunnelup.localised_description = {"item-description.traintunnelup"}
 
 
 
-
-
-
-
+-- [[
+data:extend {
+    {
+        type = "custom-input",
+        name = "raillayer-toggle-editor-view",
+        key_sequence = "CONTROL + R",
+    }
+}
+--]]
 
 data:extend {
     traintunnel,

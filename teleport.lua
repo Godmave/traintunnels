@@ -1,3 +1,8 @@
+local floor = math.floor
+local bxor = bit32.bxor
+local rshift = bit32.rshift
+local band = bit32.band
+
 local inventory_types = {}
 do
     local map = {}
@@ -169,8 +174,8 @@ end
 local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targetStop)
     local carriage = trainToObserve.carriages[tonumber(carriageIndex)]
 
-    local is_flipped = math.floor(carriage.orientation * 4 + 0.5)
-    is_flipped = bit32.bxor(bit32.rshift(sourceStop.direction, 2), bit32.rshift(is_flipped, 1))
+    local is_flipped = floor(carriage.orientation * 4 + 0.5)
+    is_flipped = bxor(rshift(sourceStop.direction, 2), rshift(is_flipped, 1))
 
     local inventories = {}
     for _, inventory_type in pairs(inventory_types) do
@@ -192,7 +197,6 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     end
 
     local data = {
-        -- todo: passengers
         driver = carriage.get_driver(),
         name = carriage.name,
         color = carriage.color,
@@ -206,12 +210,12 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     }
 
     local rotation
-    if bit32.band(targetStop.direction, 2) == 0 then
+    if band(targetStop.direction, 2) == 0 then
         rotation = { 1, 0, 0, 1 }
     else
         rotation = { 0, -1, 1, 0 }
     end
-    if bit32.band(targetStop.direction, 4) == 4 then
+    if band(targetStop.direction, 4) == 4 then
         for i = 1, 4 do rotation[i] = -rotation[i] end
     end
 
