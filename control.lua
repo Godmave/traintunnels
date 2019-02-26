@@ -1,4 +1,3 @@
-local inspect = require("inspect")
 local teleport = require("teleport")
 
 require("mod-gui")
@@ -14,14 +13,19 @@ local gsub = string.gsub
 local next = next
 
 --[[
-todo:
-- fix switch from manual supertrains to automatic. atm it behaves automatic but is not
+todo: fix all the cases of decoupling and hopefully remove the need to slow down trains
+todo: fix transition between manual_mode and auto. move driver to previous controlLoco on auto->manual
+todo: fix/replace the quadtree implementation ...
+todo: mod configuration. resources on underground, diggy, max underground level
+todo: editing trains that are partially in tunnels causes problems
+TODO: split mod. only one underground surface, but with "raillayer" and blueprint support
 --]]
 
 global.superTrains = {}
 global.trainTunnels = {}
-global.trainTunnelsRailLookup = {} -- [surface] => quadtree:rail.pos => traintunnel
-global.trainTunnelsStopLookup = {} -- stopId => traintunnel
+global.trainTunnelsRailLookup = {} -- [surface] => quadtree:rail.pos => traintunnelId
+global.trainTunnelsStopLookup = {} -- stopId => traintunnelId
+global.trainUIs = {}
 
 local ftCache = {}
 local function ft(anchor, text, row)
@@ -49,24 +53,24 @@ local function entity_distance(a, b)
 end
 local function train_frontfartheraway(carriage, to_stop)
     if #carriage.train.carriages == 1 then
-        if carriage.type == "locomotive" then
-            return abs(carriage.orientation - to_stop.orientation) > 0.25
-        else
-            return abs(carriage.orientation - to_stop.orientation) > 0.25
-        end
+        return abs(carriage.orientation - to_stop.orientation) > 0.25
     else
         return entity_distance(carriage.train.front_stock, to_stop) > entity_distance(carriage.train.back_stock, to_stop)
     end
 end
 local function tryToDisolveSupertrain(superTrainIndex)
     local superTrain = global.superTrains[superTrainIndex]
+    if superTrain == nil then
+        return
+    end
     local hasPlayer = (superTrain.player_index and superTrain.player_index > 0)
     local isInPieces = table_size(superTrain.trains) > 1
+    local hasMomentum = (superTrain.speed ~= 0)
 
     if isInPieces then
         return false
     elseif not superTrain.auto then
-        if hasPlayer then
+        if hasPlayer or hasMomentum then
             return false
         else
             global.superTrains[superTrainIndex] = nil
@@ -79,321 +83,10 @@ local function tryToDisolveSupertrain(superTrainIndex)
     return true
 end
 
-
-script.on_event(defines.events.on_tick, function(event)
-    global.distances = global.distances or {}
-
-    if #global.superTrains > 0 then
-        for _, trainToObserve in pairs(global.superTrains) do
-            if trainToObserve.controlTrain and trainToObserve.controlTrain.valid then
-                if trainToObserve.auto then
-                    if not trainToObserve.controlTrain.manual_mode then
-                        if trainToObserve.arrivingTunnel then
-                            trainToObserve.controlTrain.manual_mode = true
-                            trainToObserve.controlTrain.speed = trainToObserve.speed
-                            trainToObserve.controlTrain.manual_mode = false
-                        end
-                    else
-                        trainToObserve.auto = false
-                    end
-                end
-
-                trainToObserve.speed = trainToObserve.controlTrain.speed
-                if trainToObserve.speed == 0 then
-                    if not (trainToObserve.checkWhenStopped and tryToDisolveSupertrain(_)) then
-                        if table_size(trainToObserve.trains) > 1 then
-                            for _st, subTrain in pairs(trainToObserve.trains) do
-                                if subTrain.valid then
-                                    subTrain.speed = 0
-                                end
-                            end
-                        end
-                    end
-                else
-                    -- todo: in 0.17 we should be able to only do this when the schedule changes via a newly introduced event
-                    trainToObserve.schedule = trainToObserve.controlTrain.schedule
-
-                    if trainToObserve.carriagesChanged then
-                        trainToObserve.carriages =  {}
-                    end
-
-                    if next(trainToObserve.carriages) == nil then
-                        for _st, subTrain in pairs(trainToObserve.trains) do
-                            if subTrain.valid then
-                                trainToObserve.carriages[#trainToObserve.carriages+1] = subTrain.front_stock
-                                if subTrain.front_stock.unit_number ~= subTrain.back_stock.unit_number then
-                                    trainToObserve.carriages[#trainToObserve.carriages+1] = subTrain.back_stock
-                                end
-                            end
-                        end
-                        trainToObserve.carriagesChanged = false
-                    end
-
-                    if not trainToObserve.auto then
-                        for _c=1,#trainToObserve.carriages do
-                            local carriage = trainToObserve.carriages[_c]
-                            if carriage.valid then
-                                local driver = carriage.get_driver()
-                                if driver and driver.player.index == trainToObserve.player_index then
-                                    trainToObserve.rs = carriage.train.riding_state
-                                end
-                            end
-                        end
-                    end
-
-                    local trainSpeedSet = {}
-
-                    for _c=1,#trainToObserve.carriages do
-                        local carriage = trainToObserve.carriages[_c]
-                        if carriage.valid and carriage.train.valid and trainToObserve.controlTrain.valid then
-                            local carriageTeleported = false
-                            local previousSpeed = carriage.speed
-                            local compare_rail
-
-                            if #carriage.train.carriages > 1 then
-                                if carriage.train.back_stock == carriage then
-                                    compare_rail = carriage.train.back_rail
-                                else
-                                    compare_rail = carriage.train.front_rail
-                                end
-                            else
-                                if carriage.speed < 0 then
-                                    compare_rail = carriage.train.back_rail
-                                else
-                                    compare_rail = carriage.train.front_rail
-                                end
-                            end
-
-
-                            if trainToObserve.trainSpeedMulti[carriage.train.id] == nil then
-                                if (trainToObserve.speed * carriage.train.speed) < 0 then
-                                    trainToObserve.trainSpeedMulti[carriage.train.id] = -1
-                                else
-                                    trainToObserve.trainSpeedMulti[carriage.train.id] = 1
-                                end
-                            end
-
-
-                            local cposition = carriage.position
-                            local range = {
-                                x = cposition.x - 4,
-                                y = cposition.y - 4,
-                                w = 8,
-                                h = 8
-                            }
-                            local carriageSurface = carriage.surface.name
-                            local tunnels = global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range)
-                            local carriagetrain = carriage.train
-
-                            for _=1,#tunnels do
-                                local tunnel = global.trainTunnels[ tunnels[_]['tunnel']]
-                                local from_rail, to_rail, from_stop, to_stop
-
-                                if carriageSurface == tunnel.from_surface then
-                                    from_rail = tunnel.from_rail
-                                    to_rail = tunnel.to_rail
-                                    from_stop = tunnel.from_stop
-                                    to_stop = tunnel.to_stop
-                                else
-                                    from_rail = tunnel.to_rail
-                                    to_rail = tunnel.from_rail
-                                    from_stop = tunnel.to_stop
-                                    to_stop = tunnel.from_stop
-                                end
-
-                                local carriage_unit_number = carriage.unit_number
-
-                                if (compare_rail.position.x == from_rail.position.x or compare_rail.position.y == from_rail.position.y) then
-                                    local cacheKey = carriage_unit_number..':'..from_rail.unit_number
-                                    local lastDistance = global.distances[cacheKey]
-                                    local distance = entity_distance(carriage, from_rail)
-
-                                    if lastDistance ~= nil and lastDistance > distance and distance < (trainToObserve.auto and 4 or 3+abs(trainToObserve.speed)) then
-                                        global.distances[cacheKey] = nil
-                                        local driver
-                                        if not trainToObserve.auto then
-                                            driver = carriage.get_driver()
-                                        end
-
-                                        local isControl = ((trainToObserve.auto or not trainToObserve.player_index) and carriagetrain == trainToObserve.controlTrain) or (driver and driver.player.index == trainToObserve.player_index)
-
-                                        local connectedCarriage
-                                        if #carriagetrain.carriages > 1 then
-
-                                            for _=1,#carriagetrain.carriages do
-                                                local c = carriagetrain.carriages[_]
-                                                if c.unit_number == carriage_unit_number then
-                                                    if _ == 1 then
-                                                        connectedCarriage = carriagetrain.carriages[_+1]
-                                                    else
-                                                        connectedCarriage = carriagetrain.carriages[_-1]
-                                                    end
-                                                end
-                                            end
-                                        end
-
-                                        local pre = {
-                                            speedMulti = trainToObserve.trainSpeedMulti[carriagetrain.id],
-                                            speed = carriagetrain.speed,
-                                            frontFartherAwayThanBack = train_frontfartheraway(carriage, from_stop)
-                                        }
-
-
-
-                                        -- TELEPORT
-                                        if not teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop) then
-                                            log("unable to teleport")
-                                            goto carriagedone
-                                        end
-
-                                        carriage = trainToObserve.carriages[_c]
-                                        carriagetrain = carriage.train
-                                        trainToObserve.trains[carriagetrain.id] = carriagetrain
-                                        --
-
-                                        if connectedCarriage then
-                                            if (pre.speed * connectedCarriage.train.speed) < 0 then
-                                                trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * -1
-                                            else
-                                                trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti
-                                            end
-                                        end
-
-                                        if train_frontfartheraway(carriage, to_stop) == pre.frontFartherAwayThanBack then
-                                            trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti * -1
-                                        else
-                                            trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti
-                                        end
-
-                                        if #carriagetrain.carriages == 1 then
-                                            carriagetrain.speed = pre.speed * trainToObserve.trainSpeedMulti[carriagetrain.id]
-                                        end
-
-
-
-                                        if isControl then
-                                            if trainToObserve.controlTrainId ~= carriagetrain.id then
-                                                -- this should not happen, but does in auto
-                                                trainToObserve.controlTrain = carriagetrain
-                                                trainToObserve.controlTrainId = carriagetrain.id
-                                            end
-
-                                            if trainToObserve.auto then
-                                                local schedule = trainToObserve.controlTrain.schedule
-                                                schedule.current = schedule.current % #schedule.records + 1
-                                                trainToObserve.controlTrain.schedule = schedule
-
-                                                trainToObserve.controlTrain.manual_mode = false
-                                            end
-
-
-                                            if carriagetrain.speed ~= 0 then
-                                                trainToObserve.speed = carriagetrain.speed
-                                            end
-
-                                            if trainToObserve.trainSpeedMulti[carriagetrain.id] ~= 1 then
-                                                trainToObserve.speed = carriagetrain.speed
-                                                for ___ in pairs(trainToObserve.trainSpeedMulti) do
-                                                    trainToObserve.trainSpeedMulti[___] = -trainToObserve.trainSpeedMulti[___]
-                                                end
-                                            end
-                                        elseif table_size(trainToObserve.trainSpeedMulti) == 1 then
-                                            trainToObserve.trainSpeedMulti[carriagetrain.id] = 1
-                                            trainToObserve.speed = carriagetrain.speed
-                                        end
-
-                                        carriageTeleported = true
-                                        trainToObserve.carriagesChanged = true
-                                        goto carriagedone
-                                    end
-
-                                    global.distances[cacheKey] = distance
-                                end
-                            end
-
-                            ::carriagedone::
-
-                            local carriageTrainId = carriagetrain.id
-
-                            if not trainSpeedSet[carriageTrainId] and carriage.valid and carriagetrain.valid then
-                                if carriageTrainId ~= trainToObserve.controlTrainId then
-                                    carriagetrain.speed = trainToObserve.speed * trainToObserve.trainSpeedMulti[carriageTrainId] * trainToObserve.trainSpeedMulti[trainToObserve.controlTrainId]
-                                elseif carriageTeleported then
-                                    if trainToObserve.auto == false
-                                            or (
-                                            trainToObserve.controlTrain.state ~= defines.train_state.arrive_signal
-                                                    and  trainToObserve.controlTrain.state ~= defines.train_state.wait_signal
-                                                    and  trainToObserve.controlTrain.state ~= defines.train_state.no_path
-                                                    and  trainToObserve.controlTrain.state ~= defines.train_state.no_schedule
-                                                    and  trainToObserve.controlTrain.state ~= defines.train_state.path_lost
-                                    ) then
-                                        if carriagetrain.speed < 0 then
-                                            carriagetrain.speed = abs(previousSpeed) * -1
-                                        else
-                                            carriagetrain.speed = abs(previousSpeed)
-                                        end
-                                    end
-
-                                    if trainToObserve.auto then
-                                        trainToObserve.controlTrain.manual_mode = false
-                                    end
-                                end
-
-                                trainSpeedSet[carriageTrainId] = true
-                            end
-                        else
-                            trainToObserve.carriages[_c] = nil
-                        end
-                    end
-
-                    if trainToObserve.rs ~= nil and trainToObserve.player_index then
-                        game.players[trainToObserve.player_index].riding_state = trainToObserve.rs
-                        trainToObserve.rs = nil
-                    end
-                end
-
-                if next(trainToObserve.trains) ~= nil then
-                    if trainToObserve.auto or (trainToObserve.player_index and #trainToObserve.passengers > 0) then
-                        if table_size(trainToObserve.trains) > 1 then
-                            local idle_riding_state = {
-                                acceleration = defines.riding.acceleration.nothing,
-                                direction = defines.riding.direction.straight
-                            }
-
-                            local player_riding_state
-                            if trainToObserve.player_index then
-                                player_riding_state = game.players[trainToObserve.player_index].riding_state
-                            end
-
-                            for _st, subTrain in pairs(trainToObserve.trains) do
-                                if subTrain.valid then
-                                    for _c=1, #subTrain.carriages do
-                                        local driver = subTrain.carriages[_c].get_driver()
-                                        if driver and (trainToObserve.auto or driver.player.index ~= trainToObserve.player_index) then
-                                            if trainToObserve.auto then
-                                                driver.riding_state = idle_riding_state
-                                            elseif player_riding_state then
-                                                driver.riding_state = player_riding_state
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            else
-                global.superTrains[_] = nil
-            end
-        end
-    end
-end)
-
 local function tunnelPrefix(name)
     local prefix = '<T>'
     return prefix .. string.gsub(name, '^<T>', "")
 end
-
 local function updateTunnelName(entity)
     -- make sure the tunnel is prefixed with <T>
     entity.backer_name = tunnelPrefix(entity.backer_name)
@@ -405,7 +98,6 @@ local function updateTunnelName(entity)
         global.trainTunnels[tunnel].to_stop.backer_name = entity.backer_name
     end
 end
-
 local function addTunnel(tunnel)
     local rail_position
     local uniqueId = tunnel.from_stop.unit_number .. ':' .. tunnel.to_stop.unit_number
@@ -544,7 +236,21 @@ local function getSurfaceBelow(surface)
 
     return ensureSurfaceByName(surfaceBelow)
 end
+local function getSurfaceAbove(surface)
+    local surfaceAbove
+    if surface.name == "nauvis" then
+        surfaceAbove = "nauvis" -- should cause invalid
+    elseif find(surface.name, 'underground_',1,true) then
+        local level = gsub(surface.name, 'underground%_', "")
+        if level == 1 then
+            surfaceAbove = "nauvis"
+        else
+            surfaceAbove = "underground_" .. (level - 1)
+        end
+    end
 
+    return ensureSurfaceByName(surfaceBelow)
+end
 local lowerTunnelStructures = {
     [1] = {-4, 6,"traintunnelup"},
     [2] = {-2, 0,"straight-rail"},
@@ -561,8 +267,6 @@ local upperTunnelStructures = {
     [5] = {-2, 4,"straight-rail"},
     [6] = {-2, 6,"straight-rail"},
 }
-
-
 local function removeTunnelDown(entity)
     local s = entity.surface
     local p = entity.position
@@ -609,6 +313,11 @@ local function removeTunnelDown(entity)
         end
     end
 end
+local function removeTunnelUp(entity)
+    local tunnelId = global.trainTunnelsStopLookup[entity.unit_number]
+    removeTunnelDown(global.trainTunnels[tunnelId].from_stop)
+end
+
 local function findOrPlaceEntity(surfaceName, entityDefinition)
     local surface = game.surfaces[surfaceName]
 
@@ -713,7 +422,446 @@ local function createTunnelDown(entity, player_index)
     end
 end
 
+local checkplayerleft = function (event)
+    local player_index = event.player_index
 
+    for _, superTrain in pairs(global.superTrains) do
+        if superTrain.player_index == player_index then
+            superTrain.player_index = nil
+            superTrain.checkWhenStopped = true
+            goto found
+        end
+        for i=1, #superTrain.passengers do
+
+            if superTrain.passengers[i] == player_index then
+                remove(superTrain.passengers, i)
+                goto found -- can not be in more than one train at the same time
+            end
+        end
+    end
+    ::found::
+end
+
+local findPlayerInMovers = function(train, player_index)
+    local foundInLoco
+    local frontMovers = train.locomotives.front_movers
+
+    if frontMovers then
+        for _, loco in ipairs(frontMovers) do
+            local driver = loco.get_driver()
+            if driver and driver.player.index == player_index then
+                foundInLoco = loco
+                break
+            end
+        end
+    end
+
+    if not foundInLoco then
+        local backMovers = train.locomotives.back_movers
+        if backMovers then
+            for _, loco in ipairs(backMovers) do
+                local driver = loco.get_driver()
+                if driver and driver.player.index == player_index then
+                    foundInLoco = loco
+                    break
+                end
+            end
+        end
+    end
+
+    if not foundInLoco then
+        if frontMovers and frontMovers[1] then
+            frontMovers[1].set_driver(game.players[player_index])
+        else
+            -- game.print("no loco, no supertrain")
+        end
+
+        -- will get called by the set_driver event. so exit here even if there was a loco
+        return -1
+    end
+
+    return foundInLoco
+end
+
+
+script.on_event(defines.events.on_tick, function(event)
+    global.distances = global.distances or {}
+
+    if #global.superTrains > 0 then
+        for trainToObserveId, trainToObserve in pairs(global.superTrains) do
+
+            if not trainToObserve.controlLoco then
+                trainToObserve.controlLoco = trainToObserve.controlTrain.locomotives.front_movers[1]
+                if trainToObserve.controlLoco.speed == nil or trainToObserve.controlLoco.speed < 0 then
+                    trainToObserve.controlLoco = trainToObserve.controlTrain.locomotives.back_movers[1]
+                end
+            elseif trainToObserve.controlLoco.valid and trainToObserve.controlLoco.train.valid then
+                trainToObserve.controlTrain = trainToObserve.controlLoco.train
+                trainToObserve.controlTrainId = trainToObserve.controlLoco.train.id
+            end
+
+            -- debug
+            if trainToObserve.controlLoco.valid then
+                for _, t in pairs(trainToObserve.trains) do
+                    if trainToObserve.trains[_].valid then
+                        for __, c in pairs(trainToObserve.trains[_].carriages) do
+                            if c.unit_number == trainToObserve.controlLoco.unit_number then
+                                c.color = {r=0,g=1,b=0}
+                            else
+                                c.color = {r=1,g=0,b=0}
+                            end
+                        end
+                    end
+                end
+            end
+            --
+
+            if trainToObserve.controlLoco.train and trainToObserve.controlLoco.train.valid then
+                if trainToObserve.auto then
+                    if not trainToObserve.controlLoco.train.manual_mode then
+                        if trainToObserve.arrivingTunnel then
+                            trainToObserve.controlLoco.train.manual_mode = true
+                            trainToObserve.controlLoco.train.speed = trainToObserve.speed
+                            trainToObserve.controlLoco.train.manual_mode = false
+                        end
+                    else
+                        trainToObserve.auto = false
+                    end
+                elseif trainToObserve.player_index then
+                    trainToObserve.rs = game.players[trainToObserve.player_index].riding_state
+                end
+
+                trainToObserve.speed = trainToObserve.controlLoco.train.speed
+
+                -- faster speeds are prone to mis-teleport if any part of the train is not "straight"
+                local maxSpeed = 0.75
+                if trainToObserve.speed > maxSpeed then
+                    trainToObserve.speed = maxSpeed
+                    trainToObserve.controlLoco.train.speed = trainToObserve.speed
+                elseif trainToObserve.speed < -maxSpeed then
+                    trainToObserve.speed = -maxSpeed
+                    trainToObserve.controlLoco.train.speed = trainToObserve.speed
+                end
+
+                if trainToObserve.speed == 0 then
+                    if not (trainToObserve.checkWhenStopped and tryToDisolveSupertrain(_)) then
+                        if table_size(trainToObserve.trains) > 1 then
+                            for _st, subTrain in pairs(trainToObserve.trains) do
+                                if subTrain.valid then
+                                    subTrain.speed = 0
+                                end
+                            end
+                        end
+                    end
+                else
+
+                    -- todo: in 0.17 we should be able to only do this when the schedule changes via a newly introduced event
+                    trainToObserve.schedule = trainToObserve.controlLoco.train.schedule
+
+                    if trainToObserve.carriagesChanged then
+                        trainToObserve.carriages =  {}
+                    end
+
+                    -- expensive, but prevents most colliding subtrains from breaking the supertrain
+                    -- need a better way to detect (persisting) collisions
+                    for _st, subTrain in pairs(trainToObserve.trains) do
+                        if subTrain.valid then
+                            if abs(trainToObserve.speed) > 0.1 then
+                                if abs(subTrain.speed) < (abs(trainToObserve.speed) / 2) then
+                                    game.print("STOP IT!")
+                                    for _, t in pairs(trainToObserve.trains) do
+                                        -- t.manual_mode = true
+                                        if t.speed < 0 then
+                                            t.speed = -0
+                                        else
+                                            t.speed = 0
+                                        end
+                                    end
+                                    goto trainDone
+                                end
+                            end
+                        end
+                    end
+                    --
+
+                    if next(trainToObserve.carriages) == nil then
+                        for _st, subTrain in pairs(trainToObserve.trains) do
+                            if subTrain.valid then
+                                trainToObserve.carriages[#trainToObserve.carriages+1] = subTrain.front_stock
+                                if subTrain.front_stock.unit_number ~= subTrain.back_stock.unit_number then
+                                    trainToObserve.carriages[#trainToObserve.carriages+1] = subTrain.back_stock
+                                end
+                            end
+                        end
+                        trainToObserve.carriagesChanged = false
+                    end
+
+                    local carriageTeleported = false
+
+                    for _c=1,#trainToObserve.carriages do
+                        local carriage = trainToObserve.carriages[_c]
+                        -- if not carriageTeleported then -- it's not possible that both sides of a subtrain get teleported in one tick
+                        if trainToObserve.cooldown and trainToObserve.cooldown[carriage.unit_number] then
+                            trainToObserve.cooldown[carriage.unit_number] = trainToObserve.cooldown[carriage.unit_number] - 1
+                            if trainToObserve.cooldown[carriage.unit_number] == 0 then
+                                trainToObserve.cooldown[carriage.unit_number] = nil
+                            end
+                        else
+                            if carriage and carriage.valid and carriage.train.valid and trainToObserve.controlLoco.valid then
+                                local compare_rail
+
+                                if #carriage.train.carriages > 1 then
+                                    if carriage.train.back_stock == carriage then
+                                        compare_rail = carriage.train.back_rail
+                                    else
+                                        compare_rail = carriage.train.front_rail
+                                    end
+                                else
+                                    if carriage.speed < 0 then
+                                        compare_rail = carriage.train.back_rail
+                                    else
+                                        compare_rail = carriage.train.front_rail
+                                    end
+                                end
+
+
+                                if trainToObserve.trainSpeedMulti[carriage.train.id] == nil then
+                                    if (trainToObserve.speed * carriage.train.speed) < 0 then
+                                        trainToObserve.trainSpeedMulti[carriage.train.id] = -1
+                                    else
+                                        trainToObserve.trainSpeedMulti[carriage.train.id] = 1
+                                    end
+                                end
+
+
+                                local cposition = carriage.position
+                                local range = {
+                                    x = cposition.x - 6,
+                                    y = cposition.y - 6,
+                                    w = 12,
+                                    h = 12
+                                }
+                                local carriageSurface = carriage.surface.name
+                                local tunnels = global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range)
+                                local carriagetrain = carriage.train
+                                local isControl = false
+
+                                for _t=1,#tunnels do
+                                    local tunnel = global.trainTunnels[ tunnels[_t]['tunnel']]
+                                    local from_rail, to_rail, from_stop, to_stop
+
+                                    if carriageSurface == tunnel.from_surface then
+                                        from_rail = tunnel.from_rail
+                                        to_rail = tunnel.to_rail
+                                        from_stop = tunnel.from_stop
+                                        to_stop = tunnel.to_stop
+                                    else
+                                        from_rail = tunnel.to_rail
+                                        to_rail = tunnel.from_rail
+                                        from_stop = tunnel.to_stop
+                                        to_stop = tunnel.from_stop
+                                    end
+
+                                    local carriage_unit_number = carriage.unit_number
+
+                                    if (compare_rail.position.x == from_rail.position.x or compare_rail.position.y == from_rail.position.y) then
+                                        local cacheKey = carriage_unit_number..':'..from_rail.unit_number
+                                        local lastDistance = global.distances[cacheKey]
+                                        local distance = entity_distance(carriage, from_rail)
+
+                                        -- ft(carriage, lastDistance and lastDistance or "none", 1)
+                                        -- ft(carriage, distance, 2)
+
+                                        if lastDistance ~= nil and lastDistance >= distance and distance < 4 then
+                                            global.distances[cacheKey] = nil
+
+                                            isControl = trainToObserve.controlLoco.unit_number == carriage.unit_number
+
+                                            local connectedCarriage
+                                            if #carriagetrain.carriages > 1 then
+
+                                                for _=1,#carriagetrain.carriages do
+                                                    local c = carriagetrain.carriages[_]
+                                                    if c.unit_number == carriage_unit_number then
+                                                        if _ == 1 then
+                                                            connectedCarriage = carriagetrain.carriages[_+1]
+                                                        else
+                                                            connectedCarriage = carriagetrain.carriages[_-1]
+                                                        end
+                                                    end
+                                                end
+                                            end
+
+                                            local pre = {
+                                                speedMulti = trainToObserve.trainSpeedMulti[carriagetrain.id],
+                                                speed = carriagetrain.speed,
+                                                frontFartherAwayThanBack = train_frontfartheraway(carriage, from_stop)
+                                            }
+
+
+
+                                            -- TELEPORT
+                                            local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance + abs(carriagetrain.speed))
+                                            if entity == false then
+                                                game.print("unable to teleport")
+                                                carriage.color = {r=0, g=0, b=1}
+                                                for _, t in pairs(trainToObserve.trains) do
+                                                    t.manual_mode = true
+                                                    t.speed = 0
+                                                end
+                                                return
+                                                -- goto carriagedone
+                                            end
+                                            trainToObserve.carriages[_c] = entity
+
+                                            carriage = trainToObserve.carriages[_c]
+                                            carriagetrain = carriage.train
+                                            trainToObserve.trains[carriagetrain.id] = carriagetrain
+
+                                            trainToObserve.cooldown = trainToObserve.cooldown or {}
+                                            trainToObserve.cooldown[carriage.unit_number] = 1
+                                            --
+
+                                            if isControl then
+                                                if next(global.trainUIs) ~= nil then
+                                                    for _, entityNumber in pairs(global.trainUIs) do
+                                                        if  carriage_unit_number == entityNumber then
+                                                            game.players[_].opened = carriage
+                                                        end
+                                                    end
+                                                end
+                                            end
+
+                                            if connectedCarriage then
+                                                if (pre.speed * connectedCarriage.train.speed) < 0 then
+                                                    trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * -1
+                                                else
+                                                    trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * 1
+                                                end
+                                            end
+
+                                            if train_frontfartheraway(carriage, to_stop) == pre.frontFartherAwayThanBack then
+                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti * -1
+                                            else
+                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti
+                                            end
+
+                                            if #carriagetrain.carriages == 1 then
+                                                carriagetrain.speed = pre.speed * trainToObserve.trainSpeedMulti[carriagetrain.id]
+                                            end
+
+                                            if isControl then
+                                                trainToObserve.controlLoco = carriage
+                                                trainToObserve.controlTrain = carriagetrain
+                                                trainToObserve.controlTrainId = carriagetrain.id
+
+                                                -- todo this might break in cases
+                                                if trainToObserve.driverTrainId ~= nil and trainToObserve.driverTrainId ~= carriagetrain.id then
+                                                    trainToObserve.driverTrain = carriagetrain
+                                                    trainToObserve.driverTrainId = carriagetrain.id
+                                                end
+
+                                                if trainToObserve.auto then
+                                                    local schedule = trainToObserve.controlLoco.train.schedule
+                                                    schedule.current = schedule.current % #schedule.records + 1
+                                                    trainToObserve.controlLoco.train.schedule = schedule
+                                                end
+                                            elseif table_size(trainToObserve.trainSpeedMulti) == 1 then
+                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = 1
+                                                trainToObserve.speed = carriagetrain.speed
+                                            end
+
+                                            carriageTeleported = true
+                                            trainToObserve.carriagesChanged = true
+                                            goto carriagedone
+                                        end
+
+                                        global.distances[cacheKey] = distance
+                                    end
+                                end
+
+                                ::carriagedone::
+                            else
+                                trainToObserve.carriages[_c] = nil
+                                trainToObserve.carriagesChanged = true
+                            end
+                        end
+                    end
+
+                    if next(trainToObserve.trains) ~= nil then
+                        if carriageTeleported then
+                            trainToObserve.controlLoco.train.manual_mode = true
+
+                            if trainToObserve.controlLoco.train.speed * trainToObserve.speed < 0 then
+                                trainToObserve.speed = trainToObserve.controlLoco.train.speed
+                                trainToObserve.trainSpeedMulti[trainToObserve.controlLoco.train.id] = 1
+                            end
+
+                            for _, t in pairs(trainToObserve.trains) do
+                                if _ ~= trainToObserve.controlLoco.train.id then
+                                    if (trainToObserve.trainSpeedMulti[_] * t.speed * trainToObserve.speed) < 0 then
+                                        trainToObserve.trainSpeedMulti[_] = -trainToObserve.trainSpeedMulti[_]
+                                    end
+                                end
+                            end
+                        end
+
+                        for _, t in pairs(trainToObserve.trains) do
+                            --pcall(function()
+                            t.speed = trainToObserve.speed * trainToObserve.trainSpeedMulti[t.id]
+                            if _ ~= trainToObserve.controlLoco.train.id then
+                                t.schedule = nil
+                            end
+                            -- end)
+                        end
+
+                        if trainToObserve.auto and trainToObserve.controlLoco.train.manual_mode then
+                            trainToObserve.controlLoco.train.manual_mode = false
+                        end
+
+                        if trainToObserve.rs ~= nil and trainToObserve.player_index then
+                            game.players[trainToObserve.player_index].riding_state = trainToObserve.rs
+                            trainToObserve.rs = nil
+                        end
+
+                        if trainToObserve.auto or (trainToObserve.player_index and #trainToObserve.passengers > 0) then
+                            if table_size(trainToObserve.trains) > 1 then
+                                local idle_riding_state = {
+                                    acceleration = defines.riding.acceleration.nothing,
+                                    direction = defines.riding.direction.straight
+                                }
+
+                                local player_riding_state
+                                if trainToObserve.player_index then
+                                    player_riding_state = game.players[trainToObserve.player_index].riding_state
+                                end
+
+                                for _st, subTrain in pairs(trainToObserve.trains) do
+                                    if subTrain.valid then
+                                        for _c=1, #subTrain.carriages do
+                                            local driver = subTrain.carriages[_c].get_driver()
+                                            if driver and (trainToObserve.auto or driver.player.index ~= trainToObserve.player_index) then
+                                                if trainToObserve.auto then
+                                                    driver.riding_state = idle_riding_state
+                                                elseif player_riding_state then
+                                                    driver.riding_state = player_riding_state
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            else
+                global.superTrains[trainToObserveId] = nil
+            end
+
+            ::trainDone::
+        end
+    end
+end)
 
 script.on_event(defines.events.on_built_entity, function(event)
     if event.created_entity.name == "traintunnel" then
@@ -731,11 +879,17 @@ script.on_event(defines.events.on_player_mined_entity, function(event)
     if event.entity.name == "traintunnel" then
         removeTunnelDown(event.entity)
     end
+    if event.entity.name == "traintunnelup" then
+        removeTunnelUp(event.entity)
+    end
 end)
 
 script.on_event(defines.events.on_robot_mined_entity, function(event)
     if event.entity.name == "traintunnel" then
         removeTunnelDown(event.entity)
+    end
+    if event.entity.name == "traintunnelup" then
+        removeTunnelUp(event.entity)
     end
 end)
 
@@ -753,8 +907,6 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
                     if not superTrain.auto then
                         global.superTrains[_].controlTrain = train
                         global.superTrains[_].controlTrainId = train.id
-
-                        -- todo: teleport this player to the controlTrain so he can not hijack the subtrain
                     end
                     jumped = true
                     break
@@ -772,6 +924,12 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
                 end
 
                 if superTrain == nil then
+                    local foundInLoco = findPlayerInMovers(train, event.player_index)
+                    if foundInLoco == -1 then
+                        -- player got moved to another loco
+                        return
+                    end
+
                     superTrain = {
                         player_index = event.player_index,
                         passengers = {},
@@ -783,16 +941,33 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
                         trainSpeedMulti = {},
                         carriages = {}
                     }
+                    if train.manual_mode then
+                        superTrain.controlLoco = foundInLoco
+                    else
+                        superTrain.auto = true
+                    end
                     superTrain.trains[train.id] = train
                 else
                     if not superTrain.player_index then
                         superTrain.player_index = event.player_index
-                        superTrain.driverTrain = train
-                        superTrain.driverTrainId = train.id
+
 
                         if not superTrain.auto then
-                            superTrain.controlTrain = train
-                            superTrain.controlTrainId = train.id
+                            local foundInLoco = findPlayerInMovers(train, event.player_index)
+                            if foundInLoco == -1 then
+                                -- player got moved to another loco
+                                return
+                            end
+
+                            superTrain.controlLoco = foundInLoco
+                            superTrain.driverTrain = foundInLoco.train
+                            superTrain.driverTrainId = foundInLoco.train.id
+
+                            if superTrain.trainSpeedMulti[foundInLoco.train.id] < 0 then
+                                for _, t in pairs(superTrain.trains) do
+                                    superTrain.trainSpeedMulti[_] = -superTrain.trainSpeedMulti[_]
+                                end
+                            end
                         end
                     else
                         superTrain.passengers = superTrain.passengers or {}
@@ -806,44 +981,9 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
         else
             for _, superTrain in ipairs(global.superTrains) do
                 if superTrain.player_index == event.player_index then
-                    local hasPassengers = superTrain.passengers and (next(superTrain.passengers) ~= nil)
-                    if table_size(superTrain.trains) == 1 and not superTrain.auto and not hasPassengers then
-                        -- supertrain consists of only one train, resolve
-                        if superTrain.speed == 0 then
-                            global.superTrains[_] = nil
-                        else
-                            global.superTrains[_].checkWhenStopped = true
-                            global.superTrains[_].player_index = nil
-                        end
-                    else
-                        -- supertrain is split into parts or has passengers
-                        if hasPassengers then
-                            global.superTrains[_].player_index = remove(superTrain.passengers, 1)
-
-                            -- find train this new driver is sitting in
-                            -- and set it to control and/or driver train
-                            for _st, subTrain in pairs(superTrain.trains) do
-                                if subTrain.valid then
-                                    for _c=1, #subTrain.carriages do
-                                        local driver = subTrain.carriages[_c].get_driver()
-                                        if driver and driver.player.index ~= global.superTrains[_].player_index then
-
-                                            global.superTrains[_].driverTrain = subTrain
-                                            global.superTrains[_].driverTrainId = subTrain.id
-                                            if superTrain.auto then
-                                                global.superTrains[_].controlTrain = subTrain
-                                                global.superTrains[_].controlTrainId = subTrain.id
-                                            end
-
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-
-                        else
-                            global.superTrains[_].player_index = nil
-                        end
+                    superTrain.player_index = nil
+                    if not superTrain.auto then
+                        tryToDisolveSupertrain(_)
                     end
                     break
                 else
@@ -859,7 +999,6 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
         end
     end
 end)
-
 script.on_event(defines.events.on_train_changed_state, function (event)
     local train = event.train
     local trainState = event.train.state
@@ -915,7 +1054,9 @@ script.on_event(defines.events.on_train_changed_state, function (event)
         if superTrainIndex and isDisolvable then global.superTrains[superTrainIndex] = nil return end
     elseif trainState == defines.train_state.arrive_station then
         -- Braking before a station.
-        local entryStation = train.schedule.records[train.schedule.current].station
+        local schedule = train.schedule
+        local currentRecord = schedule.records[train.schedule.current]
+        local entryStation = currentRecord.station
         if find(entryStation, '<T',1, true) then
             if superTrain == nil then
                 superTrain = {
@@ -932,7 +1073,23 @@ script.on_event(defines.events.on_train_changed_state, function (event)
             else
                 superTrain.auto = true
             end
+
+            superTrain.controlLoco = nil
+
             superTrain.arrivingTunnel = true
+
+            if currentRecord.wait_conditions[1]  and currentRecord.wait_conditions[1].type ~= "circuit" then
+                currentRecord.wait_conditions[1] = {
+                    type = "circuit",
+                    compare_type = "and",
+                    condition = {
+                        comparator = "=",
+                        first_signal = {type="virtual", name="signal-T"},
+                        second_signal = {type="virtual", name="signal-T"}
+                    }
+                }
+                train.schedule = schedule
+            end
         else
             if superTrain ~= nil then
                 superTrain.arrivingTunnel = false
@@ -940,8 +1097,7 @@ script.on_event(defines.events.on_train_changed_state, function (event)
         end
     elseif trainState == defines.train_state.wait_station then
         -- Waiting at a station.
-        if superTrainIndex and isDisolvable then global.superTrains[superTrainIndex] = nil return end
-    elseif trainState == defines.train_state.manual_control_stop or trainState == trainState == defines.train_state.manual_control then
+    elseif trainState == defines.train_state.manual_control_stop or trainState == defines.train_state.manual_control then
         -- Switched to manual control and has to stop.
         -- Can move if user explicitly sits in and rides the train.
 
@@ -956,6 +1112,7 @@ script.on_event(defines.events.on_train_changed_state, function (event)
             elseif hasMomentum then
                 superTrain.checkWhenStopped = true
             else
+                if superTrainIndex and isDisolvable then global.superTrains[superTrainIndex] = nil end
                 return
             end
         end
@@ -971,12 +1128,13 @@ script.on_event(defines.events.on_train_changed_state, function (event)
 
     return
 end)
-
 script.on_event(defines.events.on_train_created, function (event)
     for _, superTrain in pairs(global.superTrains) do
+
         if event.old_train_id_1 ~= nil and superTrain.trains[event.old_train_id_1] ~= nil then
             superTrain.trains[event.old_train_id_1] = nil
             superTrain.trains[event.train.id] = event.train
+            superTrain.carriagesChanged = true
 
             if superTrain.trainSpeedMulti[event.old_train_id_1] ~= nil then
                 superTrain.trainSpeedMulti[event.train.id] = superTrain.trainSpeedMulti[event.old_train_id_1]
@@ -987,6 +1145,7 @@ script.on_event(defines.events.on_train_created, function (event)
         if event.old_train_id_2 ~= nil and superTrain.trains[event.old_train_id_2] ~= nil then
             superTrain.trains[event.old_train_id_2] = nil
             superTrain.trains[event.train.id] = event.train
+            superTrain.carriagesChanged = true
 
             if superTrain.trainSpeedMulti[event.old_train_id_2] ~= nil then
                 superTrain.trainSpeedMulti[event.train.id] = superTrain.trainSpeedMulti[event.old_train_id_2]
@@ -998,7 +1157,7 @@ script.on_event(defines.events.on_train_created, function (event)
             superTrain.controlTrain = event.train
             superTrain.controlTrainId = event.train.id
         end
-        if event.old_train_id_1 == superTrain.driverTrainId or event.old_train_id_2 == superTrain.driverTrainId then
+        if superTrain.driverTrainId ~= nil and (event.old_train_id_1 == superTrain.driverTrainId or event.old_train_id_2 == superTrain.driverTrainId) then
             superTrain.driverTrain = event.train
             superTrain.driverTrainId = event.train.id
         end
@@ -1022,8 +1181,6 @@ script.on_event(defines.events.script_raised_destroy, function (event)
     end
 
 end)
-
-
 script.on_event(defines.events.on_entity_renamed, function (event)
     if not event then return end
     local entity = event.entity
@@ -1033,38 +1190,33 @@ script.on_event(defines.events.on_entity_renamed, function (event)
         end
     end
 end)
-
-
-
-local checkplayerleft = function (event)
-    local player_index = event.player_index
-
-    for _, superTrain in pairs(global.superTrains) do
-        if superTrain.player_index == player_index then
-            superTrain.player_index = nil
-            superTrain.checkWhenStopped = true
-            goto found
-        end
-        for i=1, #superTrain.passengers do
-
-            if superTrain.passengers[i] == player_index then
-                remove(superTrain.passengers, i)
-                goto found -- can not be in more than one train at the same time
-            end
-        end
-    end
-    ::found::
-end
-
 script.on_event(defines.events.on_player_left_game, checkplayerleft)
 script.on_event(defines.events.on_player_removed, checkplayerleft)
+script.on_event(defines.events.on_gui_opened, function(event)
+    local entity = event.entity
+    if not entity or (entity.type ~= "locomotive" and entity.type ~= "cargo-wagon" and entity.type ~= "fluid-wagon" and entity.type ~= "artillery-wagon") then
+        return
+    end
 
+    local player_index = event.player_index
 
+    global.trainUIs = global.trainUIs or {}
+    global.trainUIs[player_index] = entity.unit_number
+end)
+script.on_event(defines.events.on_gui_closed, function (event)
+    local entity = event.entity
+    if not entity or (entity.type ~= "locomotive" and entity.type ~= "cargo-wagon" and entity.type ~= "fluid-wagon" and entity.type ~= "artillery-wagon") then
+        return
+    end
 
+    local player_index = event.player_index
+    if global.trainUIs and global.trainUIs[player_index] then
+        global.trainUIs[player_index] = nil
+    end
+end)
 script.on_event("raillayer-toggle-editor-view", function()
     game.print("here might be a raillayer event in the future")
 end)
-
 script.on_load(function()
     for surface in pairs(global.trainTunnelsRailLookup) do
         setmetatable(global.trainTunnelsRailLookup[surface], QuadTree)
@@ -1072,11 +1224,27 @@ script.on_load(function()
     end
 end)
 
+
+-- debug stuff
 remote.add_interface("trainTunnels", {
     clearTrains = function()
         global.superTrains = {}
     end,
     listTrains = function()
-        game.print(inspect(global.superTrains))
+        game.print(serpent.line(global.superTrains))
+    end,
+    listTunnels = function()
+        for _, t in pairs(global.trainTunnels) do
+            game.print(_)
+        end
+    end,
+    quad = function()
+        log(inspect(global.trainTunnelsRailLookup))
+    end,
+    requad = function()
+        global.trainTunnelsRailLookup = {}
+        for _, t in pairs(global.trainTunnels) do
+            addTunnel(t)
+        end
     end
 })

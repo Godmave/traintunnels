@@ -171,7 +171,7 @@ local function deserialize_inventory(inventory, data)
     end
 end
 
-local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targetStop)
+local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targetStop, distance)
     local carriage = trainToObserve.carriages[tonumber(carriageIndex)]
 
     local is_flipped = floor(carriage.orientation * 4 + 0.5)
@@ -219,7 +219,7 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
         for i = 1, 4 do rotation[i] = -rotation[i] end
     end
 
-    local ox, oy = -2, 2
+    local ox, oy = -2, distance
     ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
     local sp = targetStop.position
@@ -229,6 +229,30 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
         position = {x=sp.x + ox, y=sp.y + oy},
         direction = (targetStop.direction + data.is_flipped * 4) % 8
     }
+
+    if entity == nil then
+        ox, oy = -2, distance - 1
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+        entity = game.surfaces[targetStop.surface.index].create_entity{
+            name = data.name,
+            force = game.forces.player,
+            position = {x=sp.x + ox, y=sp.y + oy},
+            direction = (targetStop.direction + data.is_flipped * 4) % 8
+        }
+    end
+
+    if entity == nil then
+        ox, oy = -2, distance - 2
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+        entity = game.surfaces[targetStop.surface.index].create_entity{
+            name = data.name,
+            force = game.forces.player,
+            position = {x=sp.x + ox, y=sp.y + oy},
+            direction = (targetStop.direction + data.is_flipped * 4) % 8
+        }
+    end
 
     -- ft(carriage, data.direction)
 
@@ -277,13 +301,13 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
         carriage.destroy()
         script.raise_event(defines.events.script_raised_destroy, {train=train, trainId=trainId})
 
-        trainToObserve.carriages[tonumber(carriageIndex)] = entity
+        --trainToObserve.carriages[tonumber(carriageIndex)] = entity
     else
         -- game.print("cant teleport")
         return false
     end
 
-    return true
+    return entity
 end
 
 return {

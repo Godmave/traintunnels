@@ -3,8 +3,8 @@ require "util"
 local empty_sprite =
 {
     filename = "__core__/graphics/empty.png",
-    width = 0,
-    height = 0,
+    width = 1,
+    height = 1,
     frame_count = 1
 }
 
@@ -27,10 +27,15 @@ traintunnel.minable.result = "traintunnel"
 traintunnel.localised_name = {"item-name.traintunnel"}
 traintunnel.localised_description = {"item-description.traintunnel"}
 
+traintunnel.selection_box = {{-4, -6}, {0, 6}}
+traintunnel.collision_box = {{-4, -6}, {0, 6}}
+traintunnel.collision_mask = {"layer-13", "player-layer"}
 
 traintunnel.light1 = nil
 traintunnel.light2 = nil
 traintunnel.rail_overlay_animations = nil
+
+
 traintunnel.animations  = {
     east = {
         layers = {
@@ -60,9 +65,6 @@ traintunnel.animations  = {
                           width = 512,
                       }}}
 }
-traintunnel.selection_box = {{-4, -6}, {0, 6}}
-traintunnel.collision_box = {{-4, -6}, {0, 6}}
-traintunnel.collision_mask = {"layer-13", "player-layer"}
 traintunnel.top_animations = {
     east = empty_sprite,
     north = {
@@ -138,7 +140,7 @@ data:extend {
         name = "traintunnel",
         icon = "__base__/graphics/icons/train-stop.png",
         icon_size = 32,
-        flags = { "goes-to-quickbar" },
+        flags = {},
         subgroup = "transport",
         order = "a[train-system]-c[traintunnel]",
         place_result = "traintunnel",
@@ -149,7 +151,7 @@ data:extend {
         name = "traintunnelup",
         icon = "__base__/graphics/icons/train-stop.png",
         icon_size = 32,
-        flags = { "goes-to-quickbar" },
+        flags = {},
         subgroup = "transport",
         order = "a[train-system]-c[traintunnelup]",
         place_result = "traintunnelup",

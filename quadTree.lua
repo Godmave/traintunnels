@@ -1,4 +1,6 @@
-MAX_OBJECTS_PER_QUAD = 4
+-- todo: rewrite this broken piece of code :|
+
+MAX_OBJECTS_PER_QUAD = 40
 
 QuadTree = {
     name = "QuadTree",
@@ -112,6 +114,10 @@ function QuadTree:removeObject(object)
 end
 
 function QuadTree:getObjectsInRange(range)
+--    if true then
+--        return self.objects
+--    end
+
     local near = {}
     if not self.children then
         for i,o in pairs(self.objects) do
