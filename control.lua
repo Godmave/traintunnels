@@ -501,6 +501,7 @@ script.on_event(defines.events.on_tick, function(event)
             end
 
             -- debug
+            --[[
             if trainToObserve.controlLoco.valid then
                 for _, t in pairs(trainToObserve.trains) do
                     if trainToObserve.trains[_].valid then
@@ -514,7 +515,7 @@ script.on_event(defines.events.on_tick, function(event)
                     end
                 end
             end
-            --
+            --]]
 
             if trainToObserve.controlLoco.train and trainToObserve.controlLoco.train.valid then
                 if trainToObserve.auto then
@@ -876,10 +877,10 @@ script.on_event(defines.events.on_robot_built_entity, function(event)
 end)
 
 script.on_event(defines.events.on_player_mined_entity, function(event)
-    if event.entity.name == "traintunnel" then
+    if event.entity.valid and event.entity.name == "traintunnel" then
         removeTunnelDown(event.entity)
     end
-    if event.entity.name == "traintunnelup" then
+    if event.entity.valid and event.entity.name == "traintunnelup" then
         removeTunnelUp(event.entity)
     end
 end)
@@ -1078,7 +1079,7 @@ script.on_event(defines.events.on_train_changed_state, function (event)
 
             superTrain.arrivingTunnel = true
 
-            if currentRecord.wait_conditions[1]  and currentRecord.wait_conditions[1].type ~= "circuit" then
+            if currentRecord.wait_conditions and currentRecord.wait_conditions[1] and currentRecord.wait_conditions[1].type ~= "circuit" then
                 currentRecord.wait_conditions[1] = {
                     type = "circuit",
                     compare_type = "and",

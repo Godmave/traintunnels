@@ -1,4 +1,11 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.0.2
+Date: 27.02.2019
+
+    - Fix crash on no condition set
+    - Fix crash on tunnel entrance removal
+    - Remove debug color indicator
+
 Version: 0.0.1
 Date: 26.02.2019
 
