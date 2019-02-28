@@ -174,8 +174,9 @@ end
 local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targetStop, distance)
     local carriage = trainToObserve.carriages[tonumber(carriageIndex)]
 
-    local is_flipped = floor(carriage.orientation * 4 + 0.5)
-    is_flipped = bxor(rshift(sourceStop.direction, 2), rshift(is_flipped, 1))
+    local is_flipped = (math.abs(carriage.orientation - sourceStop.orientation) > 0.25) and 1 or 0
+
+    -- game.print(serpent.line{cindex=carriage.unit_number,carriage=carriage.orientation, sourceStop=sourceStop.orientation,is_flipped=is_flipped})
 
     local inventories = {}
     for _, inventory_type in pairs(inventory_types) do
@@ -223,42 +224,49 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
     local sp = targetStop.position
+    -- game.print(carriage.unit_number .. " - want to be: " .. (sp.x + ox) .. " direction: " .. ((targetStop.direction + data.is_flipped * 4) % 8))
+
     local entity = game.surfaces[targetStop.surface.index].create_entity{
         name = data.name,
         force = game.forces.player,
-        position = {x=sp.x + ox, y=sp.y + oy},
+        position = {x=(sp.x + ox), y=sp.y + oy},
         direction = (targetStop.direction + data.is_flipped * 4) % 8
     }
 
-    if entity == nil then
-        ox, oy = -2, distance - 1
-        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
-        entity = game.surfaces[targetStop.surface.index].create_entity{
-            name = data.name,
-            force = game.forces.player,
-            position = {x=sp.x + ox, y=sp.y + oy},
-            direction = (targetStop.direction + data.is_flipped * 4) % 8
-        }
-    end
 
-    if entity == nil then
-        ox, oy = -2, distance - 2
-        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+    --[[
+        if entity == nil then
+            ox, oy = -2, distance - 1
+            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
-        entity = game.surfaces[targetStop.surface.index].create_entity{
-            name = data.name,
-            force = game.forces.player,
-            position = {x=sp.x + ox, y=sp.y + oy},
-            direction = (targetStop.direction + data.is_flipped * 4) % 8
-        }
-    end
+            entity = game.surfaces[targetStop.surface.index].create_entity{
+                name = data.name,
+                force = game.forces.player,
+                position = {x=sp.x + ox, y=sp.y + oy},
+                direction = (targetStop.direction + data.is_flipped * 4) % 8
+            }
+        end
 
+        if entity == nil then
+            ox, oy = -2, distance - 2
+            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+            entity = game.surfaces[targetStop.surface.index].create_entity{
+                name = data.name,
+                force = game.forces.player,
+                position = {x=sp.x + ox, y=sp.y + oy},
+                direction = (targetStop.direction + data.is_flipped * 4) % 8
+            }
+        end
+    --]]
     -- ft(carriage, data.direction)
 
     if entity ~= nil then
-        entity.connect_rolling_stock(defines.rail_direction.front)
-        entity.connect_rolling_stock(defines.rail_direction.back)
+        -- game.print(entity.unit_number .. " - really am: " .. (entity.position.x) .. " direction: " .. entity.orientation)
+
+--        entity.connect_rolling_stock(defines.rail_direction.front)
+--        entity.connect_rolling_stock(defines.rail_direction.back)
         if data.driver ~= nil then
             local driver = carriage.get_driver().player.index;
             if entity.surface.index ~= data.driver.surface.index then

@@ -33,13 +33,13 @@ local function ft(anchor, text, row)
     local cacheKey = anchor.unit_number .. ':' .. row
 
     if ftCache[cacheKey] then
-        if ftCache[cacheKey].valid then
-            ftCache[cacheKey].destroy()
+        if ftCache[cacheKey] then
+            rendering.set_text(ftCache[cacheKey], text)
         end
-        ftCache[cacheKey] = nil
+    else
+        ftCache[cacheKey] = rendering.draw_text{target=anchor, text=text, surface=anchor.surface, color={r = 1, g = 0, b = 0, a = 0.5}, target_offset={0,-1 * row}}
     end
 
-    ftCache[cacheKey] = anchor.surface.create_entity{name = "flying-text", position = {anchor.position.x,anchor.position.y-0.5*row}, text = text, color = {r=1,g=0,b=0}}
 end
 
 
@@ -500,6 +500,11 @@ script.on_event(defines.events.on_tick, function(event)
                 trainToObserve.controlTrainId = trainToObserve.controlLoco.train.id
             end
 
+            if not (trainToObserve.controlLoco and trainToObserve.controlLoco.valid) then
+                global.superTrains[trainToObserveId] = nil
+                goto trainDone
+            end
+
             -- debug
             --[[
             if trainToObserve.controlLoco.valid then
@@ -511,6 +516,8 @@ script.on_event(defines.events.on_tick, function(event)
                             else
                                 c.color = {r=1,g=0,b=0}
                             end
+
+                            ft(c, math.floor(c.speed * 1000) / 1000, 10)
                         end
                     end
                 end
@@ -535,7 +542,7 @@ script.on_event(defines.events.on_tick, function(event)
                 trainToObserve.speed = trainToObserve.controlLoco.train.speed
 
                 -- faster speeds are prone to mis-teleport if any part of the train is not "straight"
-                local maxSpeed = 0.75
+                local maxSpeed = 0.8
                 if trainToObserve.speed > maxSpeed then
                     trainToObserve.speed = maxSpeed
                     trainToObserve.controlLoco.train.speed = trainToObserve.speed
@@ -601,191 +608,225 @@ script.on_event(defines.events.on_tick, function(event)
 
                     for _c=1,#trainToObserve.carriages do
                         local carriage = trainToObserve.carriages[_c]
-                        -- if not carriageTeleported then -- it's not possible that both sides of a subtrain get teleported in one tick
-                        if trainToObserve.cooldown and trainToObserve.cooldown[carriage.unit_number] then
-                            trainToObserve.cooldown[carriage.unit_number] = trainToObserve.cooldown[carriage.unit_number] - 1
-                            if trainToObserve.cooldown[carriage.unit_number] == 0 then
-                                trainToObserve.cooldown[carriage.unit_number] = nil
-                            end
-                        else
-                            if carriage and carriage.valid and carriage.train.valid and trainToObserve.controlLoco.valid then
-                                local compare_rail
-
-                                if #carriage.train.carriages > 1 then
-                                    if carriage.train.back_stock == carriage then
-                                        compare_rail = carriage.train.back_rail
-                                    else
-                                        compare_rail = carriage.train.front_rail
-                                    end
-                                else
-                                    if carriage.speed < 0 then
-                                        compare_rail = carriage.train.back_rail
-                                    else
-                                        compare_rail = carriage.train.front_rail
-                                    end
+                        if carriage and carriage.valid then
+                            if trainToObserve.cooldown and trainToObserve.cooldown[carriage.unit_number] then
+                                trainToObserve.cooldown[carriage.unit_number] = trainToObserve.cooldown[carriage.unit_number] - 1
+                                if trainToObserve.cooldown[carriage.unit_number] == 0 then
+                                    trainToObserve.cooldown[carriage.unit_number] = nil
                                 end
+                            else
+                                if carriage and carriage.valid and carriage.train.valid and trainToObserve.controlLoco.valid then
+                                    local compare_rail
 
-
-                                if trainToObserve.trainSpeedMulti[carriage.train.id] == nil then
-                                    if (trainToObserve.speed * carriage.train.speed) < 0 then
-                                        trainToObserve.trainSpeedMulti[carriage.train.id] = -1
+                                    if #carriage.train.carriages > 1 then
+                                        if carriage.train.back_stock == carriage then
+                                            compare_rail = carriage.train.back_rail
+                                        else
+                                            compare_rail = carriage.train.front_rail
+                                        end
                                     else
-                                        trainToObserve.trainSpeedMulti[carriage.train.id] = 1
-                                    end
-                                end
-
-
-                                local cposition = carriage.position
-                                local range = {
-                                    x = cposition.x - 6,
-                                    y = cposition.y - 6,
-                                    w = 12,
-                                    h = 12
-                                }
-                                local carriageSurface = carriage.surface.name
-                                local tunnels = global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range)
-                                local carriagetrain = carriage.train
-                                local isControl = false
-
-                                for _t=1,#tunnels do
-                                    local tunnel = global.trainTunnels[ tunnels[_t]['tunnel']]
-                                    local from_rail, to_rail, from_stop, to_stop
-
-                                    if carriageSurface == tunnel.from_surface then
-                                        from_rail = tunnel.from_rail
-                                        to_rail = tunnel.to_rail
-                                        from_stop = tunnel.from_stop
-                                        to_stop = tunnel.to_stop
-                                    else
-                                        from_rail = tunnel.to_rail
-                                        to_rail = tunnel.from_rail
-                                        from_stop = tunnel.to_stop
-                                        to_stop = tunnel.from_stop
+                                        if carriage.speed < 0 then
+                                            compare_rail = carriage.train.back_rail
+                                        else
+                                            compare_rail = carriage.train.front_rail
+                                        end
                                     end
 
-                                    local carriage_unit_number = carriage.unit_number
 
-                                    if (compare_rail.position.x == from_rail.position.x or compare_rail.position.y == from_rail.position.y) then
-                                        local cacheKey = carriage_unit_number..':'..from_rail.unit_number
-                                        local lastDistance = global.distances[cacheKey]
-                                        local distance = entity_distance(carriage, from_rail)
-
-                                        -- ft(carriage, lastDistance and lastDistance or "none", 1)
-                                        -- ft(carriage, distance, 2)
-
-                                        if lastDistance ~= nil and lastDistance >= distance and distance < 4 then
-                                            global.distances[cacheKey] = nil
-
-                                            isControl = trainToObserve.controlLoco.unit_number == carriage.unit_number
-
-                                            local connectedCarriage
-                                            if #carriagetrain.carriages > 1 then
-
-                                                for _=1,#carriagetrain.carriages do
-                                                    local c = carriagetrain.carriages[_]
-                                                    if c.unit_number == carriage_unit_number then
-                                                        if _ == 1 then
-                                                            connectedCarriage = carriagetrain.carriages[_+1]
-                                                        else
-                                                            connectedCarriage = carriagetrain.carriages[_-1]
-                                                        end
-                                                    end
-                                                end
-                                            end
-
-                                            local pre = {
-                                                speedMulti = trainToObserve.trainSpeedMulti[carriagetrain.id],
-                                                speed = carriagetrain.speed,
-                                                frontFartherAwayThanBack = train_frontfartheraway(carriage, from_stop)
-                                            }
+                                    if trainToObserve.trainSpeedMulti[carriage.train.id] == nil then
+                                        if (trainToObserve.speed * carriage.train.speed) < 0 then
+                                            trainToObserve.trainSpeedMulti[carriage.train.id] = -1
+                                        else
+                                            trainToObserve.trainSpeedMulti[carriage.train.id] = 1
+                                        end
+                                    end
 
 
+                                    local cposition = carriage.position
+                                    local range = {
+                                        x = cposition.x - 6,
+                                        y = cposition.y - 6,
+                                        w = 12,
+                                        h = 12
+                                    }
+                                    local carriageSurface = carriage.surface.name
+                                    local tunnels = global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range)
+                                    local carriagetrain = carriage.train
+                                    local isControl = false
 
-                                            -- TELEPORT
-                                            local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance + abs(carriagetrain.speed))
-                                            if entity == false then
-                                                game.print("unable to teleport")
-                                                carriage.color = {r=0, g=0, b=1}
-                                                for _, t in pairs(trainToObserve.trains) do
-                                                    t.manual_mode = true
-                                                    t.speed = 0
-                                                end
-                                                return
-                                                -- goto carriagedone
-                                            end
-                                            trainToObserve.carriages[_c] = entity
+                                    for _t=1,#tunnels do
+                                        local tunnel = global.trainTunnels[ tunnels[_t]['tunnel']]
+                                        local from_rail, to_rail, from_stop, to_stop
 
-                                            carriage = trainToObserve.carriages[_c]
-                                            carriagetrain = carriage.train
-                                            trainToObserve.trains[carriagetrain.id] = carriagetrain
-
-                                            trainToObserve.cooldown = trainToObserve.cooldown or {}
-                                            trainToObserve.cooldown[carriage.unit_number] = 1
-                                            --
-
-                                            if isControl then
-                                                if next(global.trainUIs) ~= nil then
-                                                    for _, entityNumber in pairs(global.trainUIs) do
-                                                        if  carriage_unit_number == entityNumber then
-                                                            game.players[_].opened = carriage
-                                                        end
-                                                    end
-                                                end
-                                            end
-
-                                            if connectedCarriage then
-                                                if (pre.speed * connectedCarriage.train.speed) < 0 then
-                                                    trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * -1
-                                                else
-                                                    trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * 1
-                                                end
-                                            end
-
-                                            if train_frontfartheraway(carriage, to_stop) == pre.frontFartherAwayThanBack then
-                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti * -1
-                                            else
-                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti
-                                            end
-
-                                            if #carriagetrain.carriages == 1 then
-                                                carriagetrain.speed = pre.speed * trainToObserve.trainSpeedMulti[carriagetrain.id]
-                                            end
-
-                                            if isControl then
-                                                trainToObserve.controlLoco = carriage
-                                                trainToObserve.controlTrain = carriagetrain
-                                                trainToObserve.controlTrainId = carriagetrain.id
-
-                                                -- todo this might break in cases
-                                                if trainToObserve.driverTrainId ~= nil and trainToObserve.driverTrainId ~= carriagetrain.id then
-                                                    trainToObserve.driverTrain = carriagetrain
-                                                    trainToObserve.driverTrainId = carriagetrain.id
-                                                end
-
-                                                if trainToObserve.auto then
-                                                    local schedule = trainToObserve.controlLoco.train.schedule
-                                                    schedule.current = schedule.current % #schedule.records + 1
-                                                    trainToObserve.controlLoco.train.schedule = schedule
-                                                end
-                                            elseif table_size(trainToObserve.trainSpeedMulti) == 1 then
-                                                trainToObserve.trainSpeedMulti[carriagetrain.id] = 1
-                                                trainToObserve.speed = carriagetrain.speed
-                                            end
-
-                                            carriageTeleported = true
-                                            trainToObserve.carriagesChanged = true
-                                            goto carriagedone
+                                        if carriageSurface == tunnel.from_surface then
+                                            from_rail = tunnel.from_rail
+                                            to_rail = tunnel.to_rail
+                                            from_stop = tunnel.from_stop
+                                            to_stop = tunnel.to_stop
+                                        else
+                                            from_rail = tunnel.to_rail
+                                            to_rail = tunnel.from_rail
+                                            from_stop = tunnel.to_stop
+                                            to_stop = tunnel.from_stop
                                         end
 
-                                        global.distances[cacheKey] = distance
-                                    end
-                                end
+                                        local carriage_unit_number = carriage.unit_number
 
-                                ::carriagedone::
-                            else
-                                trainToObserve.carriages[_c] = nil
-                                trainToObserve.carriagesChanged = true
+                                        if (compare_rail.position.x == from_rail.position.x or compare_rail.position.y == from_rail.position.y) then
+                                            local cacheKey = carriage_unit_number..':'..from_rail.unit_number
+                                            local lastDistance = global.distances[cacheKey]
+                                            local distance = entity_distance(carriage, from_stop)
+
+                                            -- ft(carriage, math.floor(distance * 1000) / 1000, 9)
+
+                                            -- ft(carriage, lastDistance and lastDistance or "none", 1)
+                                            -- ft(carriage, distance, 2)
+
+                                            if lastDistance ~= nil and lastDistance >= distance and distance - abs(carriage.speed) < 4 then
+                                                global.distances[cacheKey] = nil
+
+                                                isControl = trainToObserve.controlLoco.unit_number == carriage.unit_number
+
+                                                local connectedCarriage
+                                                if #carriagetrain.carriages > 1 then
+
+                                                    for _=1,#carriagetrain.carriages do
+                                                        local c = carriagetrain.carriages[_]
+                                                        if c.unit_number == carriage_unit_number then
+                                                            if _ == 1 then
+                                                                connectedCarriage = carriagetrain.carriages[_+1]
+                                                            else
+                                                                connectedCarriage = carriagetrain.carriages[_-1]
+                                                            end
+                                                        end
+                                                    end
+                                                end
+
+                                                local pre = {
+                                                    speedMulti = trainToObserve.trainSpeedMulti[carriagetrain.id],
+                                                    speed = carriagetrain.speed,
+                                                    frontFartherAwayThanBack = train_frontfartheraway(carriage, from_stop)
+                                                }
+
+
+
+                                                -- TELEPORT
+                                                trainToObserve.teleportDiff = trainToObserve.teleportDiff or {}
+                                                if not (trainToObserve.teleportDiff[to_stop.unit_number] and trainToObserve.teleportDiff[to_stop.unit_number].tick > event.tick-20) then
+                                                    trainToObserve.teleportDiff[to_stop.unit_number] = {diff=0.2, tick=event.tick}
+                                                end
+
+
+                                                local previousDistance = entity_distance(carriage, from_stop)
+                                                local previousSpeed = carriage.speed
+
+                                                local bla = distance + trainToObserve.teleportDiff[to_stop.unit_number].diff
+
+                                                local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance + trainToObserve.teleportDiff[to_stop.unit_number].diff)
+                                                if entity == false then
+                                                    game.print("unable to teleport")
+                                                    carriage.color = {r=0, g=0, b=1}
+                                                    for _, t in pairs(trainToObserve.trains) do
+                                                        t.manual_mode = true
+                                                        t.speed = 0
+                                                    end
+                                                    return
+                                                    -- goto carriagedone
+                                                end
+
+                                                global.lastTeleportTick = global.lastTeleportTick or event.tick
+                                                local newDistance = entity_distance(entity, to_stop)
+                                                trainToObserve.teleportDiff[to_stop.unit_number] = {tick=event.tick, diff=(newDistance - distance - 0.4)}
+                                                if trainToObserve.teleportDiff[to_stop.unit_number].diff < 0 then
+                                                   trainToObserve.teleportDiff[to_stop.unit_number] = {diff=0, tick=event.tick}
+                                                end
+
+--                                                ft(entity, "distance after: " .. math.floor(newDistance * 1000) / 1000, 2)
+--                                                ft(entity, "distance before: " .. math.floor(previousDistance * 1000) / 1000, 3)
+--                                                ft(entity, "speed after: " .. math.floor(entity.speed * 1000) / 1000, 4)
+--                                                ft(entity, "speed before: " .. math.floor(previousSpeed * 1000) / 1000, 5)
+--                                                ft(entity, "teleport tick diff: " .. math.floor((event.tick - global.lastTeleportTick) * 1000) / 1000, 6)
+--                                                ft(entity, "teleport difference: " .. math.floor(trainToObserve.teleportDiff[to_stop.unit_number].diff * 1000) / 1000, 7)
+--                                                ft(entity, "teleport distance: " .. math.floor(bla * 1000) / 1000, 8)
+
+                                                global.lastTeleportTick = event.tick
+
+                                                trainToObserve.carriages[_c] = entity
+
+                                                carriage = trainToObserve.carriages[_c]
+                                                carriagetrain = carriage.train
+                                                trainToObserve.trains[carriagetrain.id] = carriagetrain
+
+                                                trainToObserve.cooldown = trainToObserve.cooldown or {}
+                                                trainToObserve.cooldown[carriage.unit_number] = 10
+                                                --
+
+                                                if isControl then
+                                                    if next(global.trainUIs) ~= nil then
+                                                        for _, entityNumber in pairs(global.trainUIs) do
+                                                            if  carriage_unit_number == entityNumber then
+                                                                game.players[_].opened = carriage
+                                                            end
+                                                        end
+                                                    end
+                                                end
+
+                                                if connectedCarriage then
+                                                    if (pre.speed * connectedCarriage.train.speed) < 0 then
+                                                        trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * -1
+                                                    else
+                                                        trainToObserve.trainSpeedMulti[connectedCarriage.train.id] = pre.speedMulti * 1
+                                                    end
+                                                end
+
+                                                if train_frontfartheraway(carriage, to_stop) == pre.frontFartherAwayThanBack then
+                                                    trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti * -1
+                                                else
+                                                    trainToObserve.trainSpeedMulti[carriagetrain.id] = pre.speedMulti
+                                                end
+
+                                                if #carriagetrain.carriages == 1 then
+                                                    carriagetrain.speed = pre.speed * trainToObserve.trainSpeedMulti[carriagetrain.id]
+                                                end
+
+                                                if isControl then
+                                                    trainToObserve.controlLoco = carriage
+                                                    trainToObserve.controlTrain = carriagetrain
+                                                    trainToObserve.controlTrainId = carriagetrain.id
+
+                                                    -- todo this might break in cases
+                                                    if trainToObserve.driverTrainId ~= nil and trainToObserve.driverTrainId ~= carriagetrain.id then
+                                                        trainToObserve.driverTrain = carriagetrain
+                                                        trainToObserve.driverTrainId = carriagetrain.id
+                                                    end
+
+                                                    if trainToObserve.auto then
+                                                        local schedule = trainToObserve.controlLoco.train.schedule
+                                                        schedule.current = schedule.current % #schedule.records + 1
+                                                        trainToObserve.controlLoco.train.schedule = schedule
+                                                    end
+                                                elseif table_size(trainToObserve.trainSpeedMulti) == 1 then
+                                                    trainToObserve.trainSpeedMulti[carriagetrain.id] = 1
+                                                    trainToObserve.speed = carriagetrain.speed
+                                                end
+
+                                                carriageTeleported = true
+                                                trainToObserve.carriagesChanged = true
+                                                goto carriagedone
+                                            end
+
+                                            global.distances[cacheKey] = distance
+                                        end
+                                    end
+
+                                    ::carriagedone::
+                                else
+                                    trainToObserve.carriages[_c] = nil
+                                    trainToObserve.carriagesChanged = true
+                                end
                             end
+                        else
+                            trainToObserve.carriagesChanged = true
                         end
                     end
 

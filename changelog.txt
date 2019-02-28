@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.0.3
+Date: 28.02.2019
+
+    - A little better teleport positioning. Waiting for a feature-request to prevent train-stop snapping
+    - Try not to have a curve right before or after the tunnel entrances, they can cause flipping of locos :(
+
 Version: 0.0.2
 Date: 27.02.2019
 

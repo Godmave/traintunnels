@@ -35,7 +35,7 @@ traintunnel.light1 = nil
 traintunnel.light2 = nil
 traintunnel.rail_overlay_animations = nil
 
-
+-- [[
 traintunnel.animations  = {
     east = {
         layers = {
@@ -99,7 +99,7 @@ traintunnel.top_animations = {
     },
     west = empty_sprite
 }
-
+-- ]]
 
 local traintunnelup = util.table.deepcopy(traintunnel)
 traintunnelup.name = "traintunnelup"
