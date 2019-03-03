@@ -449,7 +449,7 @@ local findPlayerInMovers = function(train, player_index)
     if frontMovers then
         for _, loco in ipairs(frontMovers) do
             local driver = loco.get_driver()
-            if driver and driver.player.index == player_index then
+            if driver and ((driver.player and driver.player.index == player_index) or driver.index == player_index) then
                 foundInLoco = loco
                 break
             end
@@ -461,7 +461,7 @@ local findPlayerInMovers = function(train, player_index)
         if backMovers then
             for _, loco in ipairs(backMovers) do
                 local driver = loco.get_driver()
-                if driver and driver.player.index == player_index then
+                if driver and ((driver.player and driver.player.index == player_index) or driver.index == player_index) then
                     foundInLoco = loco
                     break
                 end

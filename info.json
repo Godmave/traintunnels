@@ -2,7 +2,7 @@
 {
   "name": "traintunnels",
   "title": "Train tunnels",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "date": "03-03-2019",
   "author": "Godmave",
   "dependencies": ["base >= 0.17"],
