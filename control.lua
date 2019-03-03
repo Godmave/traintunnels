@@ -487,7 +487,7 @@ end
 script.on_event(defines.events.on_tick, function(event)
     global.distances = global.distances or {}
 
-    if #global.superTrains > 0 then
+    if #global.superTrains > 0 and table_size(global.trainTunnelsRailLookup) > 0 then
         for trainToObserveId, trainToObserve in pairs(global.superTrains) do
 
             if not trainToObserve.controlLoco then
@@ -650,7 +650,7 @@ script.on_event(defines.events.on_tick, function(event)
                                         h = 12
                                     }
                                     local carriageSurface = carriage.surface.name
-                                    local tunnels = global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range)
+                                    local tunnels = global.trainTunnelsRailLookup[carriageSurface] and global.trainTunnelsRailLookup[carriageSurface]:getObjectsInRange(range) or {}
                                     local carriagetrain = carriage.train
                                     local isControl = false
 
@@ -1005,7 +1005,7 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
                             superTrain.driverTrain = foundInLoco.train
                             superTrain.driverTrainId = foundInLoco.train.id
 
-                            if superTrain.trainSpeedMulti[foundInLoco.train.id] < 0 then
+                            if superTrain.trainSpeedMulti[foundInLoco.train.id] and superTrain.trainSpeedMulti[foundInLoco.train.id] < 0 then
                                 for _, t in pairs(superTrain.trains) do
                                     superTrain.trainSpeedMulti[_] = -superTrain.trainSpeedMulti[_]
                                 end
