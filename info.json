@@ -2,8 +2,8 @@
 {
   "name": "traintunnels",
   "title": "Train tunnels",
-  "version": "0.0.5",
-  "date": "03-03-2019",
+  "version": "0.0.6",
+  "date": "08-03-2019",
   "author": "Godmave",
   "dependencies": ["base >= 0.17"],
   "factorio_version": "0.17",

@@ -927,10 +927,10 @@ script.on_event(defines.events.on_player_mined_entity, function(event)
 end)
 
 script.on_event(defines.events.on_robot_mined_entity, function(event)
-    if event.entity.name == "traintunnel" then
+    if event.entity.valid and event.entity.name == "traintunnel" then
         removeTunnelDown(event.entity)
     end
-    if event.entity.name == "traintunnelup" then
+    if event.entity.valid and event.entity.name == "traintunnelup" then
         removeTunnelUp(event.entity)
     end
 end)
