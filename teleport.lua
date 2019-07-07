@@ -229,37 +229,21 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     local entity = game.surfaces[targetStop.surface.index].create_entity{
         name = data.name,
         force = game.forces.player,
+        snap_to_train_stop = false,
         position = {x=(sp.x + ox), y=sp.y + oy},
         direction = (targetStop.direction + data.is_flipped * 4) % 8
     }
 
-
-
-    --[[
-        if entity == nil then
-            ox, oy = -2, distance - 1
-            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
-
-            entity = game.surfaces[targetStop.surface.index].create_entity{
-                name = data.name,
-                force = game.forces.player,
-                position = {x=sp.x + ox, y=sp.y + oy},
-                direction = (targetStop.direction + data.is_flipped * 4) % 8
-            }
-        end
-
-        if entity == nil then
-            ox, oy = -2, distance - 2
-            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
-
-            entity = game.surfaces[targetStop.surface.index].create_entity{
-                name = data.name,
-                force = game.forces.player,
-                position = {x=sp.x + ox, y=sp.y + oy},
-                direction = (targetStop.direction + data.is_flipped * 4) % 8
-            }
-        end
-    --]]
+    if(entity and math.abs(carriage.orientation - entity.orientation) > 0.25) then
+        entity.destroy()
+        entity = game.surfaces[targetStop.surface.index].create_entity{
+            name = data.name,
+            force = game.forces.player,
+            snap_to_train_stop = false,
+            position = {x=(sp.x + ox), y=sp.y + oy},
+            direction = (targetStop.direction + (1-data.is_flipped) * 4) % 8
+        }
+    end
     -- ft(carriage, data.direction)
 
     if entity ~= nil then

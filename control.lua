@@ -13,6 +13,7 @@ local gsub = string.gsub
 local next = next
 
 --[[
+wish: somehow allow to transfer power. current fallback would be another mod
 todo: fix all the cases of decoupling and hopefully remove the need to slow down trains
 todo: fix transition between manual_mode and auto. move driver to previous controlLoco on auto->manual
 todo: fix/replace the quadtree implementation ...
@@ -290,15 +291,16 @@ local function removeTunnelDown(entity)
     end
 
     for _, structure in ipairs(upperTunnelStructures) do
-        if structure[3] ~= "straight-rail" then
-            local ox, oy = structure[1], structure[2]
-            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+        local ox, oy = structure[1], structure[2]
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
-            local e = s.find_entity(structure[3], {x = p.x+ox, y = p.y+oy})
-            if e and e.valid then
+        local e = s.find_entity(structure[3], {x = p.x+ox, y = p.y+oy})
+        if e and e.valid then
+            if structure[3] ~= "straight-rail" then
                 e.destroy()
+            else
+                e.minable = true
             end
-
         end
     end
     for _, structure in ipairs(lowerTunnelStructures) do
@@ -376,6 +378,10 @@ local function createTunnelDown(entity, player_index)
         }
 
         lastCreated = findOrPlaceEntity(tunnel.from_surface, tobeCreated)
+
+        if lastCreated and not (tobeCreated.name == "traintunnel" or tobeCreated.name == "traintunnelup") then
+            lastCreated.minable = false
+        end
 
         if lastCreated and structure[3] == "traintunnel" then
             tunnel.from_stop = lastCreated
@@ -489,8 +495,11 @@ script.on_event(defines.events.on_tick, function(event)
 
     if #global.superTrains > 0 and table_size(global.trainTunnelsRailLookup) > 0 then
         for trainToObserveId, trainToObserve in pairs(global.superTrains) do
-
             if not trainToObserve.controlLoco then
+                if not (trainToObserve.controlTrain and trainToObserve.controlTrain) then
+                    goto trainDone
+                end
+
                 trainToObserve.controlLoco = trainToObserve.controlTrain.locomotives.front_movers[1]
                 if trainToObserve.controlLoco.speed == nil or trainToObserve.controlLoco.speed < 0 then
                     trainToObserve.controlLoco = trainToObserve.controlTrain.locomotives.back_movers[1]
@@ -522,7 +531,7 @@ script.on_event(defines.events.on_tick, function(event)
                     end
                 end
             end
-            --]]
+            -- ]]
 
             if trainToObserve.controlLoco.train and trainToObserve.controlLoco.train.valid then
                 if trainToObserve.auto then
@@ -540,16 +549,6 @@ script.on_event(defines.events.on_tick, function(event)
                 end
 
                 trainToObserve.speed = trainToObserve.controlLoco.train.speed
-
-                -- faster speeds are prone to mis-teleport if any part of the train is not "straight"
-                local maxSpeed = 0.8
-                if trainToObserve.speed > maxSpeed then
-                    trainToObserve.speed = maxSpeed
-                    trainToObserve.controlLoco.train.speed = trainToObserve.speed
-                elseif trainToObserve.speed < -maxSpeed then
-                    trainToObserve.speed = -maxSpeed
-                    trainToObserve.controlLoco.train.speed = trainToObserve.speed
-                end
 
                 if trainToObserve.speed == 0 then
                     if not (trainToObserve.checkWhenStopped and tryToDisolveSupertrain(_)) then
@@ -572,6 +571,7 @@ script.on_event(defines.events.on_tick, function(event)
 
                     -- expensive, but prevents most colliding subtrains from breaking the supertrain
                     -- need a better way to detect (persisting) collisions
+                    -- [[
                     for _st, subTrain in pairs(trainToObserve.trains) do
                         if subTrain.valid then
                             if abs(trainToObserve.speed) > 0.1 then
@@ -590,7 +590,7 @@ script.on_event(defines.events.on_tick, function(event)
                             end
                         end
                     end
-                    --
+                    -- ]]
 
                     if next(trainToObserve.carriages) == nil then
                         for _st, subTrain in pairs(trainToObserve.trains) do
@@ -717,12 +717,8 @@ script.on_event(defines.events.on_tick, function(event)
                                                 end
 
 
-                                                local previousDistance = entity_distance(carriage, from_stop)
-                                                local previousSpeed = carriage.speed
-
-                                                local bla = distance + trainToObserve.teleportDiff[to_stop.unit_number].diff
-
-                                                local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance + trainToObserve.teleportDiff[to_stop.unit_number].diff)
+                                                distance = 6 - distance
+                                                local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance) -- + trainToObserve.teleportDiff[to_stop.unit_number].diff)
                                                 if entity == false then
                                                     game.print("unable to teleport")
                                                     carriage.color = {r=0, g=0, b=1}
@@ -733,6 +729,8 @@ script.on_event(defines.events.on_tick, function(event)
                                                     return
                                                     -- goto carriagedone
                                                 end
+
+                                                -- entity.minable = false;
 
                                                 global.lastTeleportTick = global.lastTeleportTick or event.tick
                                                 local newDistance = entity_distance(entity, to_stop)
@@ -758,7 +756,7 @@ script.on_event(defines.events.on_tick, function(event)
                                                 trainToObserve.trains[carriagetrain.id] = carriagetrain
 
                                                 trainToObserve.cooldown = trainToObserve.cooldown or {}
-                                                trainToObserve.cooldown[carriage.unit_number] = 10
+                                                trainToObserve.cooldown[carriage.unit_number] = 2
                                                 --
 
                                                 if isControl then
@@ -849,12 +847,12 @@ script.on_event(defines.events.on_tick, function(event)
                         end
 
                         for _, t in pairs(trainToObserve.trains) do
-                            --pcall(function()
-                            t.speed = trainToObserve.speed * trainToObserve.trainSpeedMulti[t.id]
-                            if _ ~= trainToObserve.controlLoco.train.id then
-                                t.schedule = nil
-                            end
-                            -- end)
+                            pcall(function()
+                                t.speed = trainToObserve.speed * trainToObserve.trainSpeedMulti[t.id]
+                                if _ ~= trainToObserve.controlLoco.train.id then
+                                    t.schedule = nil
+                                end
+                            end)
                         end
 
                         if trainToObserve.auto and trainToObserve.controlLoco.train.manual_mode then

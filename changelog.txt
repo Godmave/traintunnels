@@ -1,5 +1,10 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.0.6
+Date: 07.07.2019
+
+    - Just some fixes for 0.17 (moving of gui style attribute)
+
+Version: 0.0.6
 Date: 08.03.2019
 
     - Fix crash when using bots
