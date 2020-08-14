@@ -52,18 +52,34 @@ traintunnel.animations  = {
         }
     },
     north = empty_sprite,
-    south = empty_sprite,
+    south = {
+        layers = {
+            {
+                filename = "__traintunnels__/graphics/placeholders/S.png",
+                frame_count = 1,
+                y = 412,
+                height = 100,
+                hr_version = nil,
+                line_length = 1,
+                priority = "high",
+                scale = 1,
+                shift = {3,6},
+                width = 256
+            }
+        }
+    },
     west = {layers = {{
-                          filename = "__traintunnels__/graphics/placeholders/W.png",
-                          frame_count = 1,
-                          height = 256,
-                          hr_version = nil,
-                          line_length = 1,
-                          priority = "high",
-                          scale = 0.9,
-                          shift = {1,1},
-                          width = 512,
-                      }}}
+        filename = "__traintunnels__/graphics/placeholders/W.png",
+        frame_count = 1,
+        height = 83,
+        hr_version = nil,
+        line_length = 1,
+        priority = "high",
+        scale = 0.9,
+        shift = {1,3.49},
+        width = 512,
+        y = 173
+    }}}
 }
 traintunnel.top_animations = {
     east = empty_sprite,
@@ -87,17 +103,27 @@ traintunnel.top_animations = {
             {
                 filename = "__traintunnels__/graphics/placeholders/S.png",
                 frame_count = 1,
-                height = 512,
+                height = 412,
                 hr_version = nil,
                 line_length = 1,
                 priority = "high",
                 scale = 1,
-                shift = {3,0},
+                shift = {3,-2},
                 width = 256
             }
         }
     },
-    west = empty_sprite
+    west = {layers = {{
+        filename = "__traintunnels__/graphics/placeholders/W.png",
+        frame_count = 1,
+        height = 173,
+        hr_version = nil,
+        line_length = 1,
+        priority = "high",
+        scale = 0.9,
+        shift = {1,0},
+        width = 512,
+    }}}
 }
 -- ]]
 

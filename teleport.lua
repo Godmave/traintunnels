@@ -1,6 +1,3 @@
-local floor = math.floor
-local bxor = bit32.bxor
-local rshift = bit32.rshift
 local band = bit32.band
 
 local inventory_types = {}
@@ -15,7 +12,7 @@ do
     table.sort(inventory_types)
 end
 local function serialize_equipment_grid(grid)
-    local names, xs, ys = {}, {}, {}
+    local names, energy, shield, xs, ys = {}, {}, {}, {}, {}
 
     local position = {0,0}
     local width, height = grid.width, grid.height
@@ -36,6 +33,8 @@ local function serialize_equipment_grid(grid)
 
                     local idx = #names + 1
                     names[idx] = equipment.name
+                    energy[idx] = equipment.energy
+                    shield[idx] = equipment.shield
                     xs[idx] = x
                     ys[idx] = y
                 end
@@ -44,6 +43,8 @@ local function serialize_equipment_grid(grid)
     end
     return {
         names = names,
+        energy = energy,
+        shield = shield,
         xs = xs,
         ys = ys,
     }
@@ -52,8 +53,8 @@ local function serialize_inventory(inventory)
     local filters
 
     local bar
-    if inventory.hasbar() then
-        bar = inventory.getbar()
+    if inventory.supports_bar() then
+        bar = inventory.get_bar()
     end
 
     if inventory.supports_filters() then
@@ -69,16 +70,19 @@ local function serialize_inventory(inventory)
     for i = 1, #inventory do
         local slot = inventory[i]
         if slot.valid_for_read then
-            if slot.is_item_with_inventory then
-                print("sending items with inventory is not allowed")
-            elseif slot.is_blueprint or slot.is_blueprint_book
+            if slot.is_blueprint or slot.is_blueprint_book or slot.is_upgrade_item
                     or slot.is_deconstruction_item or slot.is_item_with_tags then
                 local success, export = pcall(slot.export_stack)
                 if not success then
-                    print("failed to export item")
+                    -- print("failed to export item")
                 else
                     item_exports[i] = export
                 end
+            elseif slot.is_item_with_inventory then
+                -- print("sending items with inventory is not allowed")
+            elseif slot.is_selection_tool then
+                -- ignore, until we know how to handle it
+                -- modded onces will need to interact with their mod, so not that easy
             else
                 item_names[i] = slot.name
                 item_counts[i] = slot.count
@@ -117,26 +121,34 @@ local function serialize_inventory(inventory)
         item_grids = item_grids,
     }
 end
+
 local function deserialize_grid(grid, data)
     grid.clear()
-    local names, xs, ys = data.names, data.xs, data.ys
+    local names, energy, shield, xs, ys = data.names, data.energy, data.shield, data.xs, data.ys
     for i = 1, #names do
-        grid.put({
+        local equipment = grid.put({
             name = names[i],
             position = {xs[i], ys[i]}
         })
+
+        if equipment then
+            if shield[i] > 0 then
+                equipment.shield = shield[i]
+            end
+            if energy[i] > 0 then
+                equipment.energy = energy[i]
+            end
+        end
     end
 end
 local function deserialize_inventory(inventory, data)
-    local item_names, item_counts, item_durabilities,
-    item_ammos, item_exports, item_labels, item_grids
-    = data.item_names, data.item_counts, data.item_durabilities,
-    data.item_ammos, data.item_exports, data.item_labels, data.item_grids
-
-    if inventory.hasbar() then
-        inventory.setbar(data.bar)
-    end
-
+    local item_names = data.item_names or {}
+    local item_counts = data.item_counts or {}
+    local item_durabilities = data.item_durabilities or {}
+    local item_ammos = data.item_ammos or {}
+    local item_exports = data.item_exports or {}
+    local item_labels = data.item_labels or {}
+    local item_grids = data.item_grids or {}
     for idx, name in pairs(item_names) do
         local slot = inventory[idx]
         slot.set_stack({
@@ -150,7 +162,7 @@ local function deserialize_inventory(inventory, data)
             slot.ammo = item_ammos[idx]
         end
         local label = item_labels[idx]
-        if label then
+        if label and slot.is_item_with_label then
             slot.label = label.label
             slot.label_color = label.label_color
             slot.allow_manual_label_change = label.allow_manual_label_change
@@ -162,7 +174,13 @@ local function deserialize_inventory(inventory, data)
         end
     end
     for idx, str in pairs(item_exports) do
-        inventory[idx].import_stack(str)
+        local success = inventory[idx].import_stack(str)
+        if success == -1 then
+            print("item imported with errors")
+        elseif success == 1 then
+            print("failed to import item")
+        end
+
     end
     if data.filters then
         for idx, filter in pairs(data.filters) do
@@ -224,7 +242,6 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
 
     local sp = targetStop.position
-    -- game.print(carriage.unit_number .. " - want to be: " .. (sp.x + ox) .. " direction: " .. ((targetStop.direction + data.is_flipped * 4) % 8))
 
     local entity = game.surfaces[targetStop.surface.index].create_entity{
         name = data.name,
@@ -244,13 +261,8 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
             direction = (targetStop.direction + (1-data.is_flipped) * 4) % 8
         }
     end
-    -- ft(carriage, data.direction)
 
     if entity ~= nil then
-        -- game.print(entity.unit_number .. " - really am: " .. (entity.position.x) .. " direction: " .. entity.orientation)
-
---        entity.connect_rolling_stock(defines.rail_direction.front)
---        entity.connect_rolling_stock(defines.rail_direction.back)
         if data.driver ~= nil then
             local driver = carriage.get_driver().player.index;
             if entity.surface.index ~= data.driver.surface.index then
@@ -287,15 +299,8 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
         end
 
         entity.train.schedule = trainToObserve.schedule
-
-        local train = carriage.train
-        local trainId = carriage.train.id
         carriage.destroy()
-        script.raise_event(defines.events.script_raised_destroy, {train=train, trainId=trainId})
-
-        --trainToObserve.carriages[tonumber(carriageIndex)] = entity
     else
-        -- game.print("cant teleport")
         return false
     end
 
