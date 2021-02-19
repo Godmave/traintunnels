@@ -35,6 +35,8 @@ traintunnel.light1 = nil
 traintunnel.light2 = nil
 traintunnel.rail_overlay_animations = nil
 
+traintunnel.max_health = 10000
+
 -- [[
 traintunnel.animations  = {
     east = {
@@ -141,6 +143,11 @@ data:extend {
         type = "custom-input",
         name = "raillayer-toggle-editor-view",
         key_sequence = "CONTROL + R",
+    },
+    {
+        type = "custom-input",
+        name = "trainteleport-entertunnel",
+        key_sequence = "RETURN",
     }
 }
 --]]
@@ -159,6 +166,28 @@ data:extend {
         },
         energy_required = 30,
         result = "traintunnel",
+        requester_paste_multiplier = 1
+    },
+    {
+        type = "recipe",
+        name = "traintunneldown",
+        enabled = true,
+        ingredients = {
+            { "traintunnelup", 1 }
+        },
+        energy_required = 5,
+        result = "traintunnel",
+        requester_paste_multiplier = 1
+    },
+    {
+        type = "recipe",
+        name = "traintunnelup",
+        enabled = true,
+        ingredients = {
+            { "traintunnel", 1 }
+        },
+        energy_required = 5,
+        result = "traintunnelup",
         requester_paste_multiplier = 1
     },
     {
@@ -184,3 +213,5 @@ data:extend {
         stack_size = 1
     }
 }
+
+data.raw['tile']['landfill']["autoplace"] = {}

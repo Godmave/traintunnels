@@ -14,6 +14,8 @@ end
 local function serialize_equipment_grid(grid)
     local names, energy, shield, xs, ys = {}, {}, {}, {}, {}
 
+    if not grid then return nil end
+
     local position = {0,0}
     local width, height = grid.width, grid.height
     local processed = {}
@@ -102,7 +104,7 @@ local function serialize_inventory(inventory)
                 end
 
                 local grid = slot.grid
-                if grid then
+                    if grid then
                     item_grids[i] = serialize_equipment_grid(grid)
                 end
             end
@@ -197,6 +199,7 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
     -- game.print(serpent.line{cindex=carriage.unit_number,carriage=carriage.orientation, sourceStop=sourceStop.orientation,is_flipped=is_flipped})
 
     local inventories = {}
+    local grid = serialize_equipment_grid(carriage.grid)
     for _, inventory_type in pairs(inventory_types) do
         local inventory = carriage.get_inventory(inventory_type)
         if inventory then
@@ -222,6 +225,7 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
         health = carriage.health,
         is_flipped = 1-is_flipped,
         inventories = inventories,
+        grid = grid,
         fluids = fluids,
         energy = carriage.energy,
         currently_burning = carriage.burner and carriage.burner.currently_burning and carriage.burner.currently_burning.name,
@@ -264,7 +268,12 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
 
     if entity ~= nil then
         if data.driver ~= nil then
-            local driver = carriage.get_driver().player.index;
+            local driver = carriage.get_driver()
+            if(driver.is_player()) then
+                driver = driver.index
+            else
+                driver = driver.player.index
+            end
             if entity.surface.index ~= data.driver.surface.index then
                 game.players[driver].teleport(game.players[driver].position, entity.surface.index)
             end
@@ -296,6 +305,10 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
                 entity.burner.currently_burning = data.currently_burning
                 entity.burner.remaining_burning_fuel = data.remaining_burning_fuel
             end
+        end
+
+        if data.grid and entity.grid then
+            deserialize_grid(entity.grid, data.grid)
         end
 
         entity.train.schedule = trainToObserve.schedule

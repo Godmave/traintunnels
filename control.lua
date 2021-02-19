@@ -14,11 +14,13 @@ local next = next
 
 --[[
 wish: somehow allow to transfer power. current fallback would be another mod
+todo: place an arrow sprite on top of the tunnel indicating if it goes up or down?
+todo: find a way to recover broken superTrains
 todo: fix transition between manual_mode and auto. move driver to previous controlLoco on auto->manual
 todo: fix/replace the quadtree implementation ... or maybe replace it with collisions
 todo: mod configuration. resources on underground, diggy, max underground level
 todo: editing trains that are partially in tunnels causes problems
-TODO: split mod. only one underground surface, but with "raillayer" and blueprint support
+TODO: allow setting max depth in mod settings. in case of implementation of blueprints those will be limited to one underground level
 --]]
 
 global.superTrains = {}
@@ -167,6 +169,8 @@ end
 
 
 local function removeTunnel(tunnel)
+    if not (tunnel.from_stop.valid and tunnel.to_stop.valid) then return end
+
     local rail_position
     local uniqueId = tunnel.from_stop.unit_number .. ':' .. tunnel.to_stop.unit_number
 
@@ -205,46 +209,30 @@ local function ensureSurfaceByName(surfaceName)
         return game.surfaces[surfaceName]
     end
 
-    local autoplace_controls, tile_settings
-    for control in pairs(game.autoplace_control_prototypes) do
-        if control:find("dirt") then
-            autoplace_controls = control
-        end
-    end
-
-    if autoplace_controls then
-        autoplace_controls = {
-            [autoplace_controls] = {
-                frequency = "very-low",
-                size = "very-high",
-            }
-        }
-    else
-        tile_settings = {
-            ["sand-1"] = {
-                frequency = "very-low",
-                size = "very-high",
-            }
-        }
-    end
-
     local newSurface = game.create_surface(surfaceName, {
         starting_area = "none",
         water = "none",
         cliff_settings = { cliff_elevation_0 = 1024 },
         default_enable_all_autoplace_controls = false,
-        autoplace_controls = autoplace_controls,
+        autoplace_controls = nil,
         autoplace_settings = {
             decorative = { treat_missing_as_default = false },
             entity = { treat_missing_as_default = false },
-            tile = { treat_missing_as_default = false, settings = tile_settings },
-        },
+            tile = {
+                treat_missing_as_default = false,
+                settings = {
+                    ["landfill"] = {
+                        frequency = "normal",
+                        size = "normal",
+                    }
+                }
+            },
+        }
     })
 
     newSurface.daytime = 0.5
     newSurface.freeze_daytime = 1
     newSurface.peaceful_mode = 1
-
 
     for _, entity in pairs(newSurface.find_entities_filtered({ type = 'resource'})) do
         entity.destroy()
@@ -254,11 +242,16 @@ local function ensureSurfaceByName(surfaceName)
 end
 local function getSurfaceBelow(surface)
     local surfaceBelow
+    local maxdepth = settings.global["traintunnel-maxdepth"].value
     if surface.name == "nauvis" then
         surfaceBelow = "underground_1"
     elseif find(surface.name, 'underground_',1,true) then
-        local level = gsub(surface.name, 'underground%_', "")
-        surfaceBelow = "underground_" .. (level + 1)
+        local level = gsub(surface.name, 'underground%_', "") + 0
+        if level < maxdepth then
+            surfaceBelow = "underground_" .. (level + 1)
+        else
+            surfaceBelow = surface.name
+        end
     end
 
     return ensureSurfaceByName(surfaceBelow)
@@ -269,14 +262,13 @@ local function getSurfaceAbove(surface)
         surfaceAbove = "nauvis" -- should cause invalid
     elseif find(surface.name, 'underground_',1,true) then
         local level = gsub(surface.name, 'underground%_', "")
-        if level == 1 then
+        if level == "1" then
             surfaceAbove = "nauvis"
         else
             surfaceAbove = "underground_" .. (level - 1)
         end
     end
-
-    return ensureSurfaceByName(surfaceBelow)
+    return ensureSurfaceByName(surfaceAbove)
 end
 local lowerTunnelStructures = {
     [1] = {-4, 6,"traintunnelup"},
@@ -287,7 +279,7 @@ local lowerTunnelStructures = {
     [6] = {-2, 8,"straight-rail"}
 }
 local upperTunnelStructures = {
-    [1] = { 0, 0,"traintunnel"},
+    [1] = {-4, 6,"traintunnel"},
     [2] = {-2,-2,"straight-rail"},
     [3] = {-2, 0,"straight-rail", true},
     [4] = {-2, 2,"straight-rail"},
@@ -342,10 +334,60 @@ local function removeTunnelDown(entity)
     end
 end
 local function removeTunnelUp(entity)
-    local tunnelId = global.trainTunnelsStopLookup[entity.unit_number]
-    removeTunnelDown(global.trainTunnels[tunnelId].from_stop)
-end
+    local ts = entity.surface
+    local p = entity.position
+    local d = entity.direction
 
+    local s = getSurfaceAbove(entity.surface)
+
+    local tunnelId = global.trainTunnelsStopLookup[entity.unit_number]
+    if tunnelId ~= nil then
+        removeTunnel(global.trainTunnels[tunnelId])
+    end
+
+    local rotation
+    if bit32.band(d, 2) == 0 then
+        rotation = { 1, 0, 0, 1 }
+    else
+        rotation = { 0, -1, 1, 0 }
+    end
+    if bit32.band(d, 4) == 4 then
+        for i = 1, 4 do rotation[i] = -rotation[i] end
+    end
+
+    for _, structure in ipairs(upperTunnelStructures) do
+        local ox, oy = structure[1], structure[2]
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+        local e = s.find_entity(structure[3], {x = p.x+ox, y = p.y+oy})
+        if e and e.valid then
+            if structure[3] ~= "straight-rail" then
+                e.destroy()
+            else
+                e.minable = true
+            end
+        end
+    end
+    for _, structure in ipairs(lowerTunnelStructures) do
+        if structure[3] ~= "straight-rail" then
+            local ox, oy = structure[1], structure[2]
+            ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+            local e = ts.find_entity(structure[3], {x = p.x+ox, y = p.y+oy})
+            if e and e.valid then
+                e.destroy()
+            end
+        end
+    end
+
+
+    return
+--[[
+    local tunnelId = global.trainTunnelsStopLookup[entity.unit_number]
+    if not global.trainTunnels[tunnelId] then return end
+    removeTunnelDown(global.trainTunnels[tunnelId].from_stop)
+    --]]
+end
 local function findOrPlaceEntity(surfaceName, entityDefinition)
     local surface = game.surfaces[surfaceName]
 
@@ -362,6 +404,7 @@ local function findOrPlaceEntity(surfaceName, entityDefinition)
     else
         return surface.create_entity(entityDefinition)
     end
+    return false
 end
 local function createTunnelDown(entity, player_index)
     local p = entity.position
@@ -452,6 +495,94 @@ local function createTunnelDown(entity, player_index)
         addTunnel(tunnel)
     end
 end
+local function createTunnelUp(entity, player_index)
+    local p = entity.position
+    local d = entity.direction
+
+    local rotation
+    if bit32.band(d, 2) == 0 then
+        rotation = { 1, 0, 0, 1 }
+    else
+        rotation = { 0, -1, 1, 0 }
+    end
+    if bit32.band(d, 4) == 4 then
+        for i = 1, 4 do rotation[i] = -rotation[i] end
+    end
+
+
+    local tunnel = {
+        from_surface = 0,
+        from_stop = 0,
+        from_rail = 0,
+        to_surface = entity.surface.name,
+        to_stop = 0,
+        to_rail = 0,
+    }
+
+    tunnel.from_surface = getSurfaceAbove(entity.surface).name
+    local tobeCreated, lastCreated
+
+    for _, structure in ipairs(lowerTunnelStructures) do
+        local ox, oy = structure[1], structure[2]
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+        tobeCreated = {
+            name = structure[3],
+            force = game.forces.player,
+            position = {x=p.x+ox, y=p.y+oy},
+            direction = d
+        }
+
+        lastCreated = findOrPlaceEntity(tunnel.to_surface, tobeCreated)
+
+        if lastCreated and structure[3] == "traintunnelup" then
+            tunnel.to_stop = lastCreated
+        end
+        if lastCreated and structure[4] == true then
+            tunnel.to_rail = lastCreated
+        end
+    end
+
+    for _, structure in ipairs(upperTunnelStructures) do
+        local ox, oy = structure[1], structure[2]
+        ox, oy = rotation[1] * ox + rotation[2] * oy, rotation[3] * ox + rotation[4] * oy
+
+        tobeCreated = {
+            name = structure[3],
+            force = game.forces.player,
+            position = {x=p.x+ox, y=p.y+oy},
+            direction = (d + 4) % 8
+        }
+
+        lastCreated = findOrPlaceEntity(tunnel.from_surface, tobeCreated)
+
+        if lastCreated and not (tobeCreated.name == "traintunnel" or tobeCreated.name == "traintunnelup") then
+            lastCreated.minable = false
+        end
+
+        if lastCreated and structure[3] == "traintunnel" then
+            tunnel.from_stop = lastCreated
+        end
+        if lastCreated and structure[4] == true then
+            tunnel.from_rail = lastCreated
+        end
+    end
+
+    local valid = true
+    for _ in pairs(tunnel) do
+        if tunnel[_] == 0 then
+            valid = false;
+            break
+        end
+    end
+
+    if not valid then
+        removeTunnelUp(entity)
+        game.players[player_index].insert{name = "traintunnelup", count=1}
+    else
+        addTunnel(tunnel)
+    end
+end
 
 local checkplayerleft = function (event)
     local player_index = event.player_index
@@ -480,7 +611,7 @@ local findPlayerInMovers = function(train, player_index)
     if frontMovers then
         for _, loco in ipairs(frontMovers) do
             local driver = loco.get_driver()
-            if driver and ((driver.player and driver.player.index == player_index) or driver.index == player_index) then
+            if driver and ((not driver.is_player() and driver.player.index == player_index) or (driver.is_player() and driver.index == player_index)) then
                 foundInLoco = loco
                 break
             end
@@ -492,7 +623,7 @@ local findPlayerInMovers = function(train, player_index)
         if backMovers then
             for _, loco in ipairs(backMovers) do
                 local driver = loco.get_driver()
-                if driver and ((driver.player and driver.player.index == player_index) or driver.index == player_index) then
+                if driver and ((not driver.is_player() and driver.player.index == player_index) or (driver.is_player() and driver.index == player_index)) then
                     foundInLoco = loco
                     break
                 end
@@ -530,9 +661,8 @@ end
 script.on_event(defines.events.on_tick, function(event)
     global.distances = global.distances or {}
 
-    if #global.superTrains > 0 and table_size(global.trainTunnelsRailLookup) > 0 then
+    if table_size(global.superTrains) > 0 and table_size(global.trainTunnelsRailLookup) > 0 then
         for trainToObserveId, trainToObserve in pairs(global.superTrains) do
-
             for __, train in pairs(trainToObserve.trains) do
                 if not train.valid then
                     trainToObserve.trains[__] = nil
@@ -541,7 +671,7 @@ script.on_event(defines.events.on_tick, function(event)
             end
 
             if not trainToObserve.controlLoco then
-                if not (trainToObserve.controlTrain and trainToObserve.controlTrain) then
+                if not trainToObserve.controlTrain then
                     goto trainDone
                 end
 
@@ -750,15 +880,17 @@ script.on_event(defines.events.on_tick, function(event)
 
                                                 local entity = teleport.teleportCarriage(trainToObserve, _c, from_stop, to_stop, distance)
                                                 if entity == false then
-                                                    game.print("unable to teleport")
-                                                    global.trainTunnels[ tunnels[_t]['tunnel']].lastTeleportedCarriage = nil
+                                                    game.print("unable to teleport, try again later")
+                                                    -- global.trainTunnels[ tunnels[_t]['tunnel']].lastTeleportedCarriage = nil
+                                                    --[[
                                                     carriage.color = {r=0, g=0, b=1}
                                                     for _, t in pairs(trainToObserve.trains) do
                                                         t.manual_mode = true
                                                         t.speed = 0
                                                     end
-                                                    return
-                                                    -- goto carriagedone
+                                                    --]]
+                                                    -- return
+                                                    goto carriagedone
                                                 end
 
                                                 global.trainTunnels[ tunnels[_t]['tunnel']].lastTeleportedCarriage = global.trainTunnels[tunnels[_t]['tunnel']].lastTeleportedCarriage or {}
@@ -767,14 +899,6 @@ script.on_event(defines.events.on_tick, function(event)
                                                 trainToObserve.tunnels[tunnels[_t]['tunnel']] = 1
 
                                                 -- entity.minable = false;
-
---                                                ft(entity, "distance after: " .. math.floor(newDistance * 1000) / 1000, 2)
---                                                ft(entity, "distance before: " .. math.floor(previousDistance * 1000) / 1000, 3)
---                                                ft(entity, "speed after: " .. math.floor(entity.speed * 1000) / 1000, 4)
---                                                ft(entity, "speed before: " .. math.floor(previousSpeed * 1000) / 1000, 5)
---                                                ft(entity, "teleport tick diff: " .. math.floor((event.tick - global.lastTeleportTick) * 1000) / 1000, 6)
---                                                ft(entity, "teleport difference: " .. math.floor(trainToObserve.teleportDiff[to_stop.unit_number].diff * 1000) / 1000, 7)
---                                                ft(entity, "teleport distance: " .. math.floor(bla * 1000) / 1000, 8)
 
                                                 global.lastTeleportTick = event.tick
 
@@ -786,14 +910,11 @@ script.on_event(defines.events.on_tick, function(event)
 
                                                 trainToObserve.cooldown = trainToObserve.cooldown or {}
                                                 trainToObserve.cooldown[carriage.unit_number] = 2
-                                                --
 
-                                                if isControl then
-                                                    if next(global.trainUIs) ~= nil then
-                                                        for _, entityNumber in pairs(global.trainUIs) do
-                                                            if  carriage_unit_number == entityNumber then
-                                                                game.players[_].opened = carriage
-                                                            end
+                                                if next(global.trainUIs) ~= nil then
+                                                    for _, entityNumber in pairs(global.trainUIs) do
+                                                        if  carriage_unit_number == entityNumber then
+                                                            game.players[_].opened = carriage
                                                         end
                                                     end
                                                 end
@@ -937,12 +1058,18 @@ end)
 script.on_event(defines.events.on_built_entity, function(event)
     if event.created_entity.name == "traintunnel" then
         createTunnelDown(event.created_entity, event.player_index)
+    elseif event.created_entity.name == "traintunnelup" then
+        createTunnelUp(event.created_entity, event.player_index)
+        --game.players[event.player_index].print("at the moment you only can build working tunnels from up to down")
     end
 end)
 
 script.on_event(defines.events.on_robot_built_entity, function(event)
     if event.created_entity.name == "traintunnel" then
         createTunnelDown(event.created_entity, event.player_index)
+    elseif event.created_entity.name == "traintunnelup" then
+        createTunnelUp(event.created_entity, event.player_index)
+        -- game.players[event.player_index].print("at the moment you only can build working tunnels from up to down")
     end
 end)
 
@@ -970,7 +1097,7 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
         if game.players[event.player_index].driving then
             local jumped = false
             local train = event.entity.train
-            for _, superTrain in ipairs(global.superTrains) do
+            for _, superTrain in pairs(global.superTrains) do
                 if superTrain.player_index == event.player_index then
                     global.superTrains[_].driverTrain = train
                     global.superTrains[_].driverTrainId = train.id
@@ -1050,8 +1177,9 @@ script.on_event(defines.events.on_player_driving_changed_state, function(event)
             end
 
         else
-            for _, superTrain in ipairs(global.superTrains) do
+            for _, superTrain in pairs(global.superTrains) do
                 if superTrain.player_index == event.player_index then
+                    superTrain.player_index= nil
                     if not superTrain.auto then
                         tryToDisolveSupertrain(_)
                     end
@@ -1126,7 +1254,7 @@ script.on_event(defines.events.on_train_changed_state, function (event)
         local schedule = train.schedule
         local currentRecord = schedule.records[train.schedule.current]
         local entryStation = currentRecord.station
-        if find(entryStation, '<T',1, true) then
+        if entryStation and find(entryStation, '<T',1, true) then
             if superTrain == nil then
                 superTrain = {
                     auto = true,
@@ -1245,6 +1373,24 @@ script.on_event(defines.events.on_entity_renamed, function (event)
 end)
 script.on_event(defines.events.on_player_left_game, checkplayerleft)
 script.on_event(defines.events.on_player_removed, checkplayerleft)
+script.on_event(defines.events.on_selected_entity_changed, function(event)
+    local player_index = event.player_index
+    local player = game.players[player_index]
+    local selected = player.selected
+
+    if not selected then
+        -- remove drawn underground rails if any
+        return
+    end
+
+    local tunnelId = global.trainTunnelsStopLookup[selected.unit_number]
+    if tunnelId then
+        -- draw the underground rails
+    else
+        -- remove drawn underground rails if any
+    end
+
+end)
 script.on_event(defines.events.on_gui_opened, function(event)
     local entity = event.entity
     local player_index = event.player_index
@@ -1254,32 +1400,6 @@ script.on_event(defines.events.on_gui_opened, function(event)
         global.trainUIs = global.trainUIs or {}
         global.trainUIs[player_index] = entity.unit_number
     end
-
---[[
-    if entity.type == "train-stop" then
-        local tunnelId = global.trainTunnelsStopLookup[entity.unit_number]
-        if tunnelId then
-            local tunnel = global.trainTunnels[tunnelId]
-            local otherStop
-            if tunnel.to_stop == entity then
-                otherStop = tunnel.from_stop
-            else
-                otherStop = tunnel.to_stop
-            end
-
-            local left_top = otherStop.bounding_box.left_top
-            local right_bottom = otherStop.bounding_box.right_bottom
-
-            left_top.x = floor(left_top.x)
-            left_top.y = floor(left_top.y)
-            right_bottom.x = ceil(right_bottom.x)
-            right_bottom.y = ceil(right_bottom.y)
-
-            rendering.draw_rectangle{surface=entity.surface, color=entity.prototype.friendly_map_color, filled=true, left_top=left_top, right_bottom=right_bottom, draw_on_ground=true}
-        end
-    end
-]]--
-
 end)
 script.on_event(defines.events.on_gui_closed, function (event)
     local entity = event.entity
@@ -1293,7 +1413,60 @@ script.on_event(defines.events.on_gui_closed, function (event)
     end
 end)
 script.on_event("raillayer-toggle-editor-view", function()
-    game.print("here might be a raillayer event in the future")
+    -- game.print("here might be a raillayer event in the future")
+end)
+script.on_event("trainteleport-entertunnel", function(event)
+    local player_index = event.player_index
+    local player = game.players[player_index]
+    local entityNumber
+
+    if player.driving then return end
+
+    local range = {
+        x = player.position.x - 10,
+        y = player.position.y - 10,
+        w = 20,
+        h = 20
+    }
+
+    -- fetch all nearby tunnels and find the nearest one
+    local distances = {}
+    local tunnels = global.trainTunnelsRailLookup[player.surface.name] and global.trainTunnelsRailLookup[player.surface.name]:getObjectsInRange(range) or {}
+    for _t=1,#tunnels do
+        local tunnel = global.trainTunnels[ tunnels[_t]['tunnel']]
+        if player.surface.name == tunnel.from_surface then
+            distances[tunnel.from_stop.unit_number] = entity_distance(tunnel.from_stop, player)
+        elseif player.surface.name == tunnel.to_surface then
+            distances[tunnel.to_stop.unit_number] = entity_distance(tunnel.to_stop, player)
+        end
+    end
+
+    local tunnelsinreach = table_size(distances)
+    if tunnelsinreach == 0 then return end
+    local lowestDistance = 1024
+    for e, distance in pairs(distances) do
+        if distance < lowestDistance then
+            lowestDistance = distance
+            entityNumber = e
+        end
+    end
+
+
+    if not entityNumber then return end
+
+    local tunnelId = global.trainTunnelsStopLookup[entityNumber]
+    if tunnelId then
+        local tunnel = global.trainTunnels[tunnelId]
+        local otherStop
+        if tunnel.to_stop.unit_number == entityNumber then
+            otherStop = tunnel.from_stop
+        else
+            otherStop = tunnel.to_stop
+        end
+        local spawn = otherStop.surface.find_non_colliding_position(player.character.prototype.name, otherStop.position, 0, 0.25)
+        player.teleport(spawn, otherStop.surface)
+    end
+
 end)
 script.on_load(function()
     for surface in pairs(global.trainTunnelsRailLookup) do
