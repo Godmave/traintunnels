@@ -675,7 +675,11 @@ script.on_event(defines.events.on_tick, function(event)
                     goto trainDone
                 end
 
-                trainToObserve.controlLoco = find_frontloco(trainToObserve.controlTrain)
+                status, result = pcall(function() trainToObserve.controlLoco = find_frontloco(trainToObserve.controlTrain) end)
+				
+				if not status then
+				    goto trainDone
+				end
             elseif trainToObserve.controlLoco.valid and trainToObserve.controlLoco.train.valid then
                 trainToObserve.controlTrain = trainToObserve.controlLoco.train
                 trainToObserve.controlTrainId = trainToObserve.controlLoco.train.id
