@@ -133,7 +133,14 @@ local function teleportCarriage(trainToObserve, carriageIndex, sourceStop, targe
             saveRestoreLib.restoreGrid(entity.grid, data.grid)
         end
 
+        --- For compatibility with https://mods.factorio.com/mod/VehicleWagon2 ---
+        if remote.interfaces["VehicleWagon2"] then
+            wagon_data = remote.call("VehicleWagon2", "get_wagon_data", carriage)
+            remote.call("VehicleWagon2", "set_wagon_data", entity, wagon_data)
+        end
+
         entity.train.schedule = trainToObserve.schedule
+
         carriage.destroy()
     else
         return false
