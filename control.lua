@@ -107,6 +107,10 @@ local function addTunnel(tunnel)
 
     tunnel.to_stop.backer_name = tunnelPrefix(tunnel.from_stop.backer_name)
     tunnel.from_stop.backer_name = tunnelPrefix(tunnel.from_stop.backer_name)
+   
+    tunnel.destroy_ids = {}
+    tunnel.destroy_ids[script.register_on_entity_destroyed(tunnel.from_rail)] = true
+    tunnel.destroy_ids[script.register_on_entity_destroyed(tunnel.to_rail)] = true
 
     -- store the tunnel itself
     global.trainTunnels[uniqueId] = tunnel
@@ -140,7 +144,7 @@ local function addTunnel(tunnel)
 
     -- store stop lookups for auto-trains
     global.trainTunnelsStopLookup[tunnel.from_stop.unit_number] = uniqueId
-    global.trainTunnelsStopLookup[tunnel.to_stop.unit_number] = uniqueId
+    global.trainTunnelsStopLookup[tunnel.to_stop.unit_number] = uniqueId    
 
     return uniqueId
 end
@@ -176,30 +180,13 @@ local function removeTunnel(tunnel)
     local uniqueId = tunnel.from_stop.unit_number .. ':' .. tunnel.to_stop.unit_number
 
     global.trainTunnels[uniqueId] = nil
-
-    rail_position = tunnel.from_rail.position
+    
     if global.trainTunnelsRailLookup[tunnel.from_surface] then
-        global.trainTunnelsRailLookup[tunnel.from_surface]:removeObject({
-            x = rail_position.x,
-            y = rail_position.y,
-            width = 1,
-            height = 1,
-            tunnel = uniqueId
-
-        })
-
+        global.trainTunnelsRailLookup[tunnel.from_surface]:removeObjectByProperty('tunnel', uniqueId)
     end
 
-    rail_position = tunnel.to_rail.position
     if global.trainTunnelsRailLookup[tunnel.to_surface] then
-        global.trainTunnelsRailLookup[tunnel.to_surface]:removeObject({
-            x = rail_position.x,
-            y = rail_position.y,
-            width = 1,
-            height = 1,
-            tunnel = uniqueId
-
-        })
+        global.trainTunnelsRailLookup[tunnel.to_surface]:removeObjectByProperty('tunnel', uniqueId)
     end
 
     global.trainTunnelsStopLookup[tunnel.from_stop.unit_number] = nil
@@ -835,7 +822,7 @@ script.on_event(defines.events.on_tick, function(event)
 
                                         local carriage_unit_number = carriage.unit_number
 
-                                        if (    ((carriage.orientation == 0 or carriage.orientation == 0.5) and compare_rail.position.x == from_rail.position.x )
+                                        if ( ((carriage.orientation == 0 or carriage.orientation == 0.5) and compare_rail.position.x == from_rail.position.x )
                                              or ((carriage.orientation == 0.25 or carriage.orientation == 0.75) and compare_rail.position.y == from_rail.position.y))
                                         then
                                             local cacheKey = carriage_unit_number..':'..from_rail.unit_number
@@ -1092,6 +1079,14 @@ script.on_event(defines.events.on_robot_mined_entity, function(event)
     end
 end)
 
+script.on_event(defines.events.on_entity_destroyed, function(event)
+    local tunnels = global.trainTunnels
+    for id, tunnel in pairs(tunnels) do
+        if tunnel.destroy_ids ~= nil and tunnel.destroy_ids[event.registration_number] ~= nil then
+            removeTunnel(tunnel)
+        end
+    end
+end)
 
 script.on_event(defines.events.on_player_driving_changed_state, function(event)
     if event.entity ~= nil and event.entity.train ~= nil then
