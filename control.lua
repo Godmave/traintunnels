@@ -2,6 +2,7 @@ local teleport = require("teleport")
 
 require("mod-gui")
 require("quadTree")
+saveRestoreLib = require("__Robot256Lib__/script/save_restore")
 
 local insert = table.insert
 local remove = table.remove
