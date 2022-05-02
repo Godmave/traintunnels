@@ -79,6 +79,16 @@ function QuadTree:check(object, func, x, y)
     end
 end
 
+function QuadTree:execute(func)
+    if not self.children then
+        func(self)
+    else
+        for c in pairs(self.children) do
+            self.children[c]:execute(func)
+        end
+    end
+end
+
 function QuadTree:addObject(object)
     local function add(tree)
         if tree.count == MAX_OBJECTS_PER_QUAD then
@@ -112,6 +122,21 @@ function QuadTree:removeObject(object)
 
     self:check(object, remove)
 end
+
+function QuadTree:removeObjectByProperty(property, value)
+    local function remove(tree)
+        for _, o in pairs(tree.objects) do
+            if o[property] == value then
+                tree.objects[_] = nil
+                tree.count = self.count - 1
+                break
+            end
+        end
+    end
+
+    self:execute(remove)
+end
+
 
 function QuadTree:getObjectsInRange(range)
 --    if true then
